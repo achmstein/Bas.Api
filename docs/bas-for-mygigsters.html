@@ -1,0 +1,233 @@
+<title>BAS Lodgement for MyGigsters</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  /* A document that exists to be printed. It commits to a light ground on purpose - it is paper -
+     and paints every colour explicitly so it holds on any viewer background. */
+  :root {
+    --ink: #16202b;
+    --paper: #ffffff;
+    --rule: #d8dee6;
+    --muted: #57677a;
+    --accent: #1a4d8f;
+    --flag: #9c4f1f;
+    --wash: #f4f6f9;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Sans 3", ui-sans-serif, system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet {
+    max-width: 40rem;
+    margin: 0 auto;
+    padding: 3.5rem 2rem 4rem;
+  }
+
+  header { border-bottom: 2px solid var(--ink); padding-bottom: 1.1rem; }
+
+  .parties {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .7rem;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 .7rem;
+  }
+
+  h1 {
+    font-family: Newsreader, Georgia, serif;
+    font-weight: 500;
+    font-size: 2.1rem;
+    line-height: 1.12;
+    letter-spacing: -.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: 1.02rem;
+    color: var(--muted);
+    margin: .85rem 0 0;
+    max-width: 34rem;
+  }
+
+  h2 {
+    font-family: Newsreader, Georgia, serif;
+    font-weight: 600;
+    font-size: 1.18rem;
+    letter-spacing: -.005em;
+    margin: 0 0 .9rem;
+  }
+
+  section { margin-top: 2.6rem; }
+
+  p { margin: 0 0 .9rem; max-width: 34rem; }
+  p:last-child { margin-bottom: 0; }
+
+  /* Numbered only here: the worker's journey is a real sequence, and the order is the point. */
+  ol.journey { list-style: none; margin: 0; padding: 0; display: grid; gap: .55rem; counter-reset: step; }
+
+  ol.journey li {
+    display: grid;
+    grid-template-columns: 1.6rem 1fr;
+    gap: .8rem;
+    align-items: baseline;
+    counter-increment: step;
+  }
+
+  ol.journey li::before {
+    content: counter(step);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .78rem;
+    font-weight: 500;
+    color: var(--accent);
+    text-align: right;
+  }
+
+  ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+  ul.plain li { display: grid; grid-template-columns: .55rem 1fr; gap: .8rem; align-items: baseline; }
+  ul.plain li::before { content: "—"; color: var(--rule); font-size: .8rem; }
+
+  .chain {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .5rem .7rem;
+    background: var(--wash);
+    border: 1px solid var(--rule);
+    padding: .95rem 1.1rem;
+    margin: 0 0 1.2rem;
+    font-size: .87rem;
+  }
+  .chain span { white-space: nowrap; }
+  .chain .sep { color: var(--accent); font-weight: 600; }
+  .chain .us { font-weight: 600; }
+
+  code, .box {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .86em;
+  }
+  .box { color: var(--accent); font-weight: 500; }
+
+  .lead-time {
+    border-left: 3px solid var(--flag);
+    padding: .2rem 0 .2rem 1.1rem;
+    display: grid;
+    gap: .85rem;
+  }
+  .lead-time strong { color: var(--flag); font-weight: 600; }
+
+  footer {
+    margin-top: 3rem;
+    padding-top: 1.1rem;
+    border-top: 1px solid var(--rule);
+    font-size: .85rem;
+    color: var(--muted);
+    display: grid;
+    gap: .3rem;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover, footer a:focus-visible { text-decoration: underline; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media print {
+    @page { size: A4; margin: 18mm 16mm; }
+    body { font-size: 10.5pt; }
+    .sheet { padding: 0; max-width: none; }
+    section { margin-top: 1.5rem; break-inside: avoid; }
+    header { break-after: avoid; }
+    h2 { break-after: avoid; }
+    .chain, .lead-time, ol.journey { break-inside: avoid; }
+  }
+</style>
+
+<div class="sheet">
+  <header>
+    <p class="parties">MyGigsters &nbsp;·&nbsp; NightTax</p>
+    <h1>Lodging BAS through a registered agent</h1>
+    <p class="standfirst">
+      Your workers prepare their quarterly BAS inside your app. A registered tax agent checks the
+      figures, then lodges them with the ATO.
+    </p>
+  </header>
+
+  <section>
+    <h2>What your worker sees</h2>
+    <ol class="journey">
+      <li>Opens BAS in your app. No second login.</li>
+      <li>Enters three figures — <span class="box">G1</span> total sales,
+        <span class="box">1A</span> GST collected, <span class="box">1B</span> GST paid.</li>
+      <li>Taps submit. We confirm it has been sent for review.</li>
+      <li>Our agent checks it and lodges it.</li>
+      <li>Status comes back to your app: in review, then lodged.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>What sits behind it</h2>
+    <div class="chain">
+      <span>Your app</span><span class="sep">→</span>
+      <span class="us">NightTax</span><span class="sep">→</span>
+      <span>Xero Practice Manager</span><span class="sep">→</span>
+      <span>Agent reviews</span><span class="sep">→</span>
+      <span>ATO</span>
+    </div>
+    <p>
+      The agent in the middle is the point. Your workers are not lodging alone — a registered agent
+      is accountable for what goes to the ATO, and their lodgement program usually buys more time
+      than the standard due date.
+    </p>
+  </section>
+
+  <section>
+    <h2>What we need from you</h2>
+    <p>Two things, once. Neither is secret, so email is fine.</p>
+    <ul class="plain">
+      <li>A short name for your platform — we have assumed <code>mygigsters</code>.</li>
+      <li>A public key file. One command generates it; the matching private half never leaves your
+        servers, so there is no password to send or rotate between us.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>What your side builds</h2>
+    <p>About half a day for one backend engineer.</p>
+    <ul class="plain">
+      <li>One server route that asks us for a short-lived key when a worker opens the screen.</li>
+      <li>The BAS screen itself, web and Flutter.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Worth starting now</h2>
+    <div class="lead-time">
+      <p>
+        <strong>Agent authorisation.</strong> Every worker must be on our practice's ATO client list
+        before anything can be lodged for them. This has real-world lag, so it belongs in your
+        signup — not at the moment someone taps lodge.
+      </p>
+      <p>
+        <strong>Tax file numbers.</strong> We need one per worker; Practice Manager will not create
+        a client without it. That brings the Privacy Act TFN Rule onto both sides, so the
+        data-sharing agreement is best drafted alongside the build.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <div>The service is live at <strong>bas.nighttax.com.au</strong>.</div>
+    <div>Your engineers get an integration guide with working code, and an API reference at
+      <a href="https://bas.nighttax.com.au/docs">bas.nighttax.com.au/docs</a>.</div>
+  </footer>
+</div>

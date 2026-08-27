@@ -22,12 +22,28 @@ rotate in lockstep with us.
 
 ### Generating the key pair
 
+Run `generate-partner-key.sh`, which came with this guide, or the two commands it wraps:
+
 ```bash
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out bas-signing.key
 openssl pkey -in bas-signing.key -pubout -out bas-signing.pub
 ```
 
 Send us `bas-signing.pub`. Put `bas-signing.key` in your secret manager.
+
+### Check it works before you build
+
+Once we confirm you are registered, run the self-test that came with this guide. It exercises the
+whole flow against a made-up worker, and stops short of submitting so nothing reaches the practice.
+
+```bash
+npm install jose
+BAS_SIGNING_KEY="$(cat bas-signing.key)" node partner-selftest.mjs <your client id>
+```
+
+Every line should say PASS. If the token exchange fails, it is almost always one of three things:
+we have not registered you yet, the public key we hold does not match your private key, or your
+clock is out by more than 30 seconds.
 
 > **`bas-signing.key` must never reach a browser or a mobile bundle.** It stays on your server.
 > Anyone holding it can request a token for any of your users.

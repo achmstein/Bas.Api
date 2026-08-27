@@ -182,6 +182,36 @@ redeploy configuration.
 **Why there is no `/.well-known/jwks.json`.** Nothing consumes it. Partners never inspect our
 tokens; they hand them to a browser, which hands them back, and we verify them in-process.
 
+## Onboarding a partner
+
+Three steps, and nothing secret moves between the two sides.
+
+**1. They generate a key.** Send them `scripts/generate-partner-key.sh`. It writes
+`bas-signing.pub` (they email us) and `bas-signing.key` (stays in their secret manager).
+
+**2. We register them.**
+
+```bash
+export BAS_ADMIN_KEY=...            # the x-admin-key from the deployment
+./scripts/register-partner.sh mygigsters "MyGigsters" ./bas-signing.pub
+```
+
+The script refuses a file containing a PRIVATE key, because that is the mistake worth catching
+before it reaches the database rather than after.
+
+**3. They prove it works** before writing any UI, with `scripts/partner-selftest.mjs`:
+
+```bash
+npm install jose
+BAS_SIGNING_KEY="$(cat bas-signing.key)" node partner-selftest.mjs mygigsters
+```
+
+It runs the whole flow for a made-up worker and deliberately stops short of submitting, so nothing
+reaches the practice.
+
+What to send them: `docs/bas-for-mygigsters.html` (print to PDF, for a non-technical reader),
+`docs/partner-integration.md` (their engineers), and the two scripts above.
+
 ## Registering a partner
 
 Until the admin API lands (phase 3e), partners are declared in configuration and reconciled into the
