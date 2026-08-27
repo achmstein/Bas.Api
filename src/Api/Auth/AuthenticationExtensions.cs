@@ -25,17 +25,12 @@ public static class AuthenticationExtensions
             .Bind(builder.Configuration.GetSection(SigningKeyOptions.SectionName))
             .ValidateOnStart();
 
-        builder.Services.AddMemoryCache();
-
         builder.Services.AddSingleton<ISigningKeyStore, SigningKeyStore>();
-        builder.Services.AddSingleton<IPartnerKeyStore, PartnerKeyStore>();
-        builder.Services.AddSingleton<IAssertionReplayGuard, MemoryAssertionReplayGuard>();
         builder.Services.AddSingleton<AccessTokenIssuer>();
 
         // Scoped: these reach the database through the request's DbContext.
-        builder.Services.AddScoped<PartnerAssertionValidator>();
         builder.Services.AddScoped<WorkerProvisioner>();
-        builder.Services.AddScoped<PartnerTokenExchangeService>();
+        builder.Services.AddScoped<PartnerTokenService>();
 
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddScoped<ICallerContext, CallerContext>();
@@ -148,29 +143,14 @@ public static class AuthenticationExtensions
     }
 
     /// <summary>
-    /// Reads the unverified <c>iss</c> out of the posted assertion, purely to partition the rate
-    /// limiter. It is a hint and treated as one — a caller can lie, which at worst puts them in
-    /// someone else's bucket, and the address fallback covers them omitting it.
+    /// Partitions the rate limiter by the presented key's prefix — available before any database
+    /// work, and it groups a partner's traffic without putting the key itself into limiter state.
     /// </summary>
     private static string? TryReadClientIdHint(HttpContext context)
     {
-        if (!context.Request.HasFormContentType)
-            return null;
+        var presented = context.Request.Headers[PartnerTokens.HeaderName].ToString();
 
-        // Safe to read here: the framework buffers and caches the form, so the endpoint's own
-        // ReadFormAsync gets the same instance rather than an already-consumed stream.
-        if (!context.Request.Form.TryGetValue(TokenExchange.Fields.ClientAssertion, out var assertion))
-            return null;
-
-        try
-        {
-            var issuer = new JsonWebToken(assertion.ToString()).Issuer;
-            return string.IsNullOrEmpty(issuer) ? null : $"client:{issuer}";
-        }
-        catch (ArgumentException)
-        {
-            return null;
-        }
+        return string.IsNullOrEmpty(presented) ? null : $"key:{PartnerApiKey.PrefixOf(presented)}";
     }
 }
 

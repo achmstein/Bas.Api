@@ -65,22 +65,30 @@ else
                             }
                         </td>
                         <td class="px-4 py-2.5 font-mono text-xs text-zinc-500">@partner.AllowedScopes</td>
-                        <td class="px-4 py-2.5 font-mono text-xs text-zinc-400" title="Fingerprint of the registered public key">
-                            @partner.PublicKeyFingerprint
+                        <td class="px-4 py-2.5 font-mono text-xs text-zinc-400">
+                            <a href="@($"/admin/partners/{partner.ClientId}/key")"
+                               class="underline decoration-zinc-300 hover:decoration-zinc-500"
+                               title="Issue a new key - the old one stops working immediately">
+                                @(partner.ApiKeyPrefix is null ? "no key" : partner.ApiKeyPrefix + "…")
+                            </a>
                         </td>
                         <td class="px-4 py-2.5 text-xs">
-                            @if (partner.WebhookUrl is null)
-                            {
-                                <span class="text-zinc-400">polling only</span>
-                            }
-                            else if (partner.HasWebhookSecret)
-                            {
-                                <span class="text-zinc-600">signed</span>
-                            }
-                            else
-                            {
-                                <span class="text-amber-700 font-medium">UNSIGNED</span>
-                            }
+                            <a href="@($"/admin/partners/{partner.ClientId}/webhook")"
+                               class="underline decoration-zinc-300 hover:decoration-zinc-500"
+                               title="@(partner.WebhookUrl ?? "Not configured - the partner polls instead")">
+                                @if (partner.WebhookUrl is null)
+                                {
+                                    <span class="text-zinc-400">polling only</span>
+                                }
+                                else if (partner.HasWebhookSecret)
+                                {
+                                    <span class="text-zinc-600">signed</span>
+                                }
+                                else
+                                {
+                                    <span class="text-amber-700 font-medium">UNSIGNED</span>
+                                }
+                            </a>
                         </td>
                         <td class="px-4 py-2.5 text-right tabular-nums font-mono text-zinc-600">@partner.WorkerCount</td>
                         <td class="px-4 py-2.5 text-right">

@@ -1,0 +1,165 @@
+@page "/admin/partners/{ClientId}/webhook"
+@attribute [Authorize(Policy = AdminEndpoints.UiPolicyName)]
+@inject AdminService Admin
+
+<a href="/admin/partners" class="text-sm text-zinc-500 hover:text-zinc-900">&larr; Partners</a>
+
+@if (_partner is null)
+{
+    <p class="mt-4 text-sm text-zinc-500">No partner with client id <span class="font-mono">@ClientId</span>.</p>
+}
+else
+{
+    <h1 class="text-lg font-semibold tracking-tight text-zinc-900 mt-3 mb-1">
+        Webhook for @_partner.ClientId
+    </h1>
+    <p class="text-sm text-zinc-500 mb-6 max-w-xl">
+        Where we POST a statement's status changes. Optional — a partner with no webhook polls
+        instead, and polling keeps working even when delivery has been abandoned, so nothing is ever
+        stuck waiting on this.
+    </p>
+
+    @if (_issuedSecret is { } secret)
+    {
+        <div class="max-w-2xl bg-white border border-amber-300 rounded-xl overflow-hidden mb-6">
+            <div class="px-5 py-3 bg-amber-50 border-b border-amber-200">
+                <p class="text-sm font-semibold text-amber-900 m-0">Send this to them — shown once</p>
+                <p class="text-xs text-amber-800 mt-1 mb-0">
+                    They verify every delivery with it. Until they have it, their endpoint cannot
+                    tell our requests from anyone else's.
+                </p>
+            </div>
+            <div class="p-5">
+                <input readonly id="secret" value="@secret"
+                       class="w-full font-mono text-xs p-2.5 bg-zinc-50 border border-zinc-200 rounded-md" />
+                <button type="button" id="copySecret" class="@Secondary mt-3">Copy</button>
+            </div>
+        </div>
+
+        <script>
+            document.getElementById('copySecret').addEventListener('click', async event => {
+                await navigator.clipboard.writeText(document.getElementById('secret').value);
+                event.target.textContent = 'Copied';
+            });
+        </script>
+    }
+
+    <EditForm Model="Input" FormName="webhook" OnValidSubmit="SaveAsync" class="max-w-xl">
+        <div class="bg-white border border-zinc-200/70 rounded-xl p-5 grid gap-4">
+            <div>
+                <label for="url" class="@Label">Delivery URL</label>
+                <InputText id="url" @bind-Value="Input.Url" class="@Field"
+                           placeholder="https://api.mygigsters.com/hooks/bas" />
+                <p class="@Hint">
+                    Must be https. Leave it empty to remove the webhook — they will poll instead.
+                </p>
+            </div>
+
+            <div class="flex items-start gap-2.5">
+                <InputCheckbox id="newSecret" @bind-Value="Input.NewSecret"
+                               class="mt-1 h-4 w-4 rounded border-zinc-300" />
+                <div>
+                    <label for="newSecret" class="text-sm font-medium text-zinc-900">Issue a new secret</label>
+                    <p class="@Hint">
+                        @if (_partner.HasWebhookSecret)
+                        {
+                            <text>
+                                They have one. Replacing it breaks their signature checks the moment
+                                you save, so send the new one straight away.
+                            </text>
+                        }
+                        else
+                        {
+                            <text>No secret is set. One is issued automatically when you save a URL.</text>
+                        }
+                    </p>
+                </div>
+            </div>
+
+            @if (_error is not null)
+            {
+                <p class="text-sm text-red-600 flex items-start gap-1.5">
+                    <span class="inline-block h-1.5 w-1.5 rounded-full bg-red-500 mt-[7px] flex-shrink-0"></span>
+                    <span>@_error</span>
+                </p>
+            }
+            else if (_saved)
+            {
+                <p class="text-sm text-emerald-700">Saved.</p>
+            }
+
+            <div>
+                <button type="submit"
+                        class="px-3 py-2 text-sm font-medium text-white bg-zinc-900 rounded-md hover:bg-zinc-800 transition-colors">
+                    Save
+                </button>
+            </div>
+        </div>
+    </EditForm>
+
+    <div class="max-w-2xl mt-6 text-sm text-zinc-500">
+        <p class="m-0">
+            What they receive, and how to verify it, is section 14 of the integration guide.
+            Delivery is at least once, so they deduplicate on the
+            <span class="font-mono text-xs">X-Bas-Delivery</span> header.
+        </p>
+    </div>
+}
+
+@code {
+    private const string Label =
+        "block text-xxs font-medium uppercase tracking-[0.08em] text-zinc-500 mb-1.5";
+
+    private const string Field =
+        "w-full px-3 py-2 text-sm bg-white border border-zinc-200 rounded-md focus:outline-none " +
+        "focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 transition-shadow";
+
+    private const string Hint = "text-xs text-zinc-500 mt-1 mb-0";
+
+    private const string Secondary =
+        "px-2.5 py-1.5 text-xs font-medium rounded-md border border-zinc-200 text-zinc-600 " +
+        "hover:text-zinc-900 hover:border-zinc-300 hover:bg-zinc-50 transition-colors";
+
+    [Parameter]
+    public string ClientId { get; set; } = string.Empty;
+
+    [SupplyParameterFromForm]
+    private WebhookInput Input { get; set; } = new();
+
+    private AdminPartnerResponse? _partner;
+    private string? _issuedSecret;
+    private string? _error;
+    private bool _saved;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _partner = await Admin.GetPartnerAsync(ClientId, CancellationToken.None);
+
+        // Only on the initial render: after a post, the form carries what was submitted.
+        if (!_saved && _error is null)
+            Input.Url ??= _partner?.WebhookUrl;
+    }
+
+    private async Task SaveAsync()
+    {
+        var (result, error) = await Admin.SetWebhookAsync(
+            ClientId, Input.Url, Input.NewSecret, CancellationToken.None);
+
+        if (error is not null)
+        {
+            _error = error.Detail;
+            return;
+        }
+
+        _partner = result!.Partner;
+        _issuedSecret = result.Secret;
+        _saved = true;
+        Input.NewSecret = false;
+    }
+
+    private sealed class WebhookInput
+    {
+        public string? Url { get; set; }
+        public bool NewSecret { get; set; }
+    }
+}

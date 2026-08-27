@@ -144,53 +144,38 @@ immediately: repeating a request the partner has rejected will not start working
 
 ## Authentication
 
-A partner's server exchanges two JWTs it signs itself for a short-lived bearer token scoped to one
-of its users. `docs/partner-integration.md` is the partner-facing version of this; the short
-internal version:
+A partner's server sends its API key and one of its user ids; back comes a ten-minute bearer token
+scoped to that user, which is what their page holds. `docs/partner-integration.md` is the
+partner-facing version; the short internal one:
 
-- **No shared secret.** Partners register a public key and sign with the private half
-  (`private_key_jwt`). Nothing secret crosses the wire, so nothing secret can leak from either side.
-- **Identity resolves on `(partner_id, partner_sub)` only — never on email.** A unique index
-  enforces it. If an assertion could resolve a user by email address, anyone able to sign one could
-  name a victim and be handed that person's TFN and figures.
+- **The key is never stored.** The database keeps a SHA-256 and a readable prefix, so a dump of
+  this database authenticates nobody. The key exists exactly twice: in the response that issued it,
+  and in the partner's secret manager.
+- **Identity resolves on `(partner, subject)` only — never on email.** A unique index enforces it.
+  If a token request could resolve a user by email address, anyone holding a key could reach an
+  existing person's records by naming their address.
 - **No refresh token ever reaches a browser.** Renewal is the partner's component re-calling the
-  partner's own token route, which their session already guards — so a user logging out of the
-  partner app revokes our access for free, with no revocation machinery on either side.
-- **Ten-minute tokens**, signed asymmetrically with a key persisted encrypted at rest.
-- **Scope is the boundary**, checked server-side on every endpoint. Which components a partner
-  imports is cosmetic; a token holder can call any route it can name.
+  partner's own session-guarded route, so a user logging out of the partner app revokes our access
+  for free.
+- **Ten-minute tokens**, signed asymmetrically with a key persisted in Postgres, so a redeploy does
+  not 401 every worker mid-form.
+- **Scope is the boundary**, checked server-side on every endpoint.
+- **Revocation is one click**: suspend the partner or rotate their key in the console. Either takes
+  effect on the next request; tokens already minted die within minutes on their own.
 
-### Design notes
-
-**Why not ASP.NET Core Identity.** There are no local accounts here — nobody sets a password and
-nobody logs in. Identity would contribute seven unused tables and one real hazard: its external
-login path links by matching email, which is the exact vector the design above exists to close.
-
-**Why not a full OAuth server (OpenIddict, Duende).** The surface is one grant type, two JWTs in,
-one token out — no redirects, no consent, no PKCE, no refresh, no revocation. The part such a server
-would genuinely save is JWKS publication and key rotation, and neither is needed: nobody but this
-service verifies these tokens. If introspection or refresh tokens ever arrive, switching is a rework
-of `src/Api/Auth/` alone; `Partner`, `PartnerUserLink` and `Worker` are unaffected.
-
-**Why the partner's key is in configuration rather than fetched from a JWKS URL.** A JWKS URL buys
-self-service rotation, at the cost of an outbound request to an address someone else controls — and
-so a cache, a negative cache, a response size cap, an SSRF guard, and rate-limited refresh on an
-unrecognised key id. For a handful of partners rotating about as often as they change bank accounts,
-holding the key directly is the better trade. Rotation becomes: they send the new public key, we
-redeploy configuration.
-
-**Why there is no `/.well-known/jwks.json`.** Nothing consumes it. Partners never inspect our
-tokens; they hand them to a browser, which hands them back, and we verify them in-process.
+This replaced an RFC 8693 signed-assertion exchange, at David's direction, to keep the partner's
+side to one HTTP call with no crypto. The trade accepted: the key is a bearer secret, so it travels
+on every token request and a leak of the partner's copy grants access to their workers until
+rotated. What was kept: hashing at rest, show-once issuance, and instant revocation — the parts of
+"harden later" that cost nothing now.
 
 ## Onboarding a partner
 
-Sign in to `/admin/partners` and press **Register partner**. Give it a client id and a name; a
-signing key is generated for them unless you paste one they sent you.
+Sign in to `/admin/partners` and press **Register partner**. Give it a client id and a name.
 
-The private key is shown **once**, on the screen that follows. Nothing stores it — leaving the page
-loses it, and the only way to issue another is to register again. That is deliberate: if it could be
-read back, a database dump would hand over every partner's identity. Copy or download it there and
-send it over a channel you trust.
+Their API key is shown **once**, on the screen that follows. Nothing stores it — leaving the page
+loses it, and the only way to issue another is **New key** on the partner (which kills the old one).
+Copy it there and send it over a channel you trust.
 
 Then send them:
 
@@ -198,40 +183,13 @@ Then send them:
 - `docs/partner-integration.md` — for their engineers
 - `scripts/partner-selftest.mjs` — proves the key works before they build anything
 
-They run the self-test first:
+They run the self-test first — plain Node, no dependencies:
 
 ```bash
-npm install jose
-BAS_SIGNING_KEY="$(cat bas-signing.key)" node partner-selftest.mjs mygigsters
+BAS_PARTNER_KEY=bas_... node partner-selftest.mjs
 ```
 
 Every line should say PASS. It stops short of submitting, so nothing reaches the practice.
-
-## Registering a partner
-
-Until the admin API lands (phase 3e), partners are declared in configuration and reconciled into the
-database at startup. Nothing here is secret:
-
-```json
-{
-  "Partners": {
-    "Registrations": [
-      {
-        "ClientId": "mygigsters",
-        "Name": "MyGigsters",
-        "PublicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkq...\n-----END PUBLIC KEY-----",
-        "AllowedScopes": "bas:read bas:write profile:write",
-        "Active": true
-      }
-    ]
-  }
-}
-```
-
-Reconciliation is **additive**: a registration present is created or updated, one that's absent is
-left alone. Silently orphaning a partner's worker links because of a config typo would be worse than
-leaving a stale row. `"Active": false` is the kill switch — exchange starts failing immediately, and
-tokens already issued expire within minutes on their own.
 
 ## Configuration
 
@@ -239,7 +197,6 @@ tokens already issued expire within minutes on their own.
 | --- | --- |
 | `ConnectionStrings__basdb` | Aspire (env in the container) |
 | `PartnerAuth__Issuer` | env; this service's public origin |
-| `Partners__Registrations__<n>__*` | env / appsettings |
 | `Cors__AllowedOrigins__<n>` | env; the partner origins our JS is embedded on |
 
 Local development:

@@ -3,8 +3,6 @@ using Microsoft.AspNetCore.DataProtection;
 using Bas.Api.Auth;
 using Bas.Api.Statements;
 using Bas.Api.Data;
-using Bas.Api.Components;
-using Bas.Api.Statements;
 using Bas.Api.Infrastructure;
 using Bas.Api.Sync;
 using Bas.Api.Webhooks;
@@ -34,10 +32,6 @@ builder.Services.AddDbContext<BasDbContext>((serviceProvider, options) =>
 
 builder.Services.AddOptions<DatabaseOptions>()
     .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName));
-
-builder.Services.AddOptions<PartnerRegistrationOptions>()
-    .Bind(builder.Configuration.GetSection(PartnerRegistrationOptions.SectionName))
-    .ValidateOnStart();
 
 // The Data Protection key ring, in Postgres. It protects antiforgery tokens and the admin auth
 // cookie, and the default on-disk location is inside a container with no volume - so every deploy

@@ -327,20 +327,7 @@ public sealed class ReconcilerTests(ReconcilerFactory factory) : IClassFixture<R
     /// <summary>A worker with a complete identity, a saved statement, and it submitted.</summary>
     private async Task<(HttpClient Client, Guid PeriodId)> SubmitAsync(string subject)
     {
-        var now = _factory.Clock.GetUtcNow();
-
-        var form = new Dictionary<string, string>
-        {
-            [TokenExchange.Fields.GrantType] = TokenExchange.GrantType,
-            [TokenExchange.Fields.ClientAssertionType] = TokenExchange.ClientAssertionType,
-            [TokenExchange.Fields.ClientAssertion] = _factory.Partner.CreateClientAssertion(now),
-            [TokenExchange.Fields.SubjectTokenType] = TokenExchange.SubjectTokenType,
-            [TokenExchange.Fields.SubjectToken] = _factory.Partner.CreateSubjectToken(subject, now)
-        };
-
-        using var tokenResponse = await _client.PostAsync("/api/v1/partner/token", new FormUrlEncodedContent(form));
-        tokenResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
-        var token = (await tokenResponse.Content.ReadFromJsonAsync<TokenExchangeResponse>())!;
+        var token = await _factory.MintTokenAsync(_client, subject);
 
         var client = _factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);

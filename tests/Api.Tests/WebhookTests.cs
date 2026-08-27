@@ -92,7 +92,7 @@ public sealed class WebhookTests(WebhookFactory factory) : IClassFixture<Webhook
     [Fact]
     public async Task A_delivery_is_signed_and_identified()
     {
-        _factory.Partner.Respond = HttpStatusCode.OK;
+        _factory.Endpoint.Respond = HttpStatusCode.OK;
 
         var (_, periodId) = await SubmitAsync("wh-signed");
         var deliveryId = (await SingleDeliveryAsync(periodId)).Id;
@@ -101,7 +101,7 @@ public sealed class WebhookTests(WebhookFactory factory) : IClassFixture<Webhook
 
         // Looked up by delivery id: a sweep sends everything that is due, so "the last request"
         // could belong to whichever test ran before this one.
-        var request = _factory.Partner.RequestFor(deliveryId);
+        var request = _factory.Endpoint.RequestFor(deliveryId);
         request.ShouldNotBeNull();
 
         request["X-Bas-Event"].ShouldBe(WebhookEvents.StatusChanged);
@@ -114,7 +114,7 @@ public sealed class WebhookTests(WebhookFactory factory) : IClassFixture<Webhook
         var provided = parts[1]["v1=".Length..];
 
         var expected = Convert.ToHexString(HMACSHA256.HashData(
-            Encoding.UTF8.GetBytes(WebhookFactory.WebhookSecret),
+            Encoding.UTF8.GetBytes(await _factory.GetWebhookSecretAsync()),
             Encoding.UTF8.GetBytes($"{timestamp}.{request.Body}"))).ToLowerInvariant();
 
         provided.ShouldBe(expected);
@@ -147,7 +147,7 @@ public sealed class WebhookTests(WebhookFactory factory) : IClassFixture<Webhook
     public async Task A_failing_endpoint_is_retried()
     {
         var (_, periodId) = await SubmitAsync("wh-retry");
-        _factory.Partner.Respond = HttpStatusCode.InternalServerError;
+        _factory.Endpoint.Respond = HttpStatusCode.InternalServerError;
 
         await DispatchAsync();
 
@@ -157,7 +157,7 @@ public sealed class WebhookTests(WebhookFactory factory) : IClassFixture<Webhook
         delivery.NextAttemptAt.ShouldBeGreaterThan(_factory.Clock.GetUtcNow());
         delivery.LastError.ShouldContain("500");
 
-        _factory.Partner.Respond = HttpStatusCode.OK;
+        _factory.Endpoint.Respond = HttpStatusCode.OK;
         await MakeDueAsync(periodId);
         await DispatchAsync();
 
@@ -170,7 +170,7 @@ public sealed class WebhookTests(WebhookFactory factory) : IClassFixture<Webhook
         // 400 means the partner does not want this request. Repeating it unchanged for six hours
         // would help nobody.
         var (_, periodId) = await SubmitAsync("wh-badrequest");
-        _factory.Partner.Respond = HttpStatusCode.BadRequest;
+        _factory.Endpoint.Respond = HttpStatusCode.BadRequest;
 
         await DispatchAsync();
 
@@ -183,7 +183,7 @@ public sealed class WebhookTests(WebhookFactory factory) : IClassFixture<Webhook
     public async Task Rate_limiting_is_retried_rather_than_abandoned()
     {
         var (_, periodId) = await SubmitAsync("wh-429");
-        _factory.Partner.Respond = HttpStatusCode.TooManyRequests;
+        _factory.Endpoint.Respond = HttpStatusCode.TooManyRequests;
 
         await DispatchAsync();
 
@@ -194,7 +194,7 @@ public sealed class WebhookTests(WebhookFactory factory) : IClassFixture<Webhook
     public async Task An_exhausted_delivery_gives_up_without_blocking_the_statement()
     {
         var (_, periodId) = await SubmitAsync("wh-exhausted");
-        _factory.Partner.Respond = HttpStatusCode.ServiceUnavailable;
+        _factory.Endpoint.Respond = HttpStatusCode.ServiceUnavailable;
 
         for (var i = 0; i < 12; i++)
         {
@@ -255,20 +255,11 @@ public sealed class WebhookTests(WebhookFactory factory) : IClassFixture<Webhook
 
     private async Task<(HttpClient Client, Guid PeriodId)> SubmitAsync(string subject)
     {
-        var now = _factory.Clock.GetUtcNow();
+        // Configuring the webhook also ensures the partner exists, and captures the secret the
+        // server issued - the one every delivery is signed with.
+        await _factory.GetWebhookSecretAsync();
 
-        var form = new Dictionary<string, string>
-        {
-            [TokenExchange.Fields.GrantType] = TokenExchange.GrantType,
-            [TokenExchange.Fields.ClientAssertionType] = TokenExchange.ClientAssertionType,
-            [TokenExchange.Fields.ClientAssertion] = _factory.Partner_.CreateClientAssertion(now),
-            [TokenExchange.Fields.SubjectTokenType] = TokenExchange.SubjectTokenType,
-            [TokenExchange.Fields.SubjectToken] = _factory.Partner_.CreateSubjectToken(subject, now)
-        };
-
-        using var tokenResponse = await _client.PostAsync("/api/v1/partner/token", new FormUrlEncodedContent(form));
-        tokenResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
-        var token = (await tokenResponse.Content.ReadFromJsonAsync<TokenExchangeResponse>())!;
+        var token = await _factory.MintTokenAsync(_client, subject);
 
         var client = _factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);

@@ -61,7 +61,10 @@ public sealed class BasDbContext(DbContextOptions<BasDbContext> options)
             entity.HasKey(e => e.Id);
             entity.Property(e => e.ClientId).HasMaxLength(200).IsRequired();
             entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
-            entity.Property(e => e.PublicKeyPem).HasMaxLength(4000).IsRequired();
+            entity.Property(e => e.ApiKeyHash).HasMaxLength(64);
+            entity.Property(e => e.ApiKeyPrefix).HasMaxLength(16);
+            // The token endpoint's lookup: candidates by prefix, then a constant-time hash check.
+            entity.HasIndex(e => e.ApiKeyPrefix);
             entity.Property(e => e.AllowedScopes).HasMaxLength(500).IsRequired();
             entity.Property(e => e.WebhookUrl).HasMaxLength(2000);
             entity.Property(e => e.WebhookSecret).HasMaxLength(200);

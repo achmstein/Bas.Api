@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using Bas.Api.Contracts.Partner;
 using Bas.Api.Infrastructure;
+using Microsoft.AspNetCore.Mvc;
 
 namespace Bas.Api.Auth;
 
@@ -12,75 +12,41 @@ public static class PartnerAuthEndpoints
 
     public static IEndpointRouteBuilder MapPartnerAuthEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapPost("/api/v1/partner/token", ExchangeTokenAsync)
-            .WithName("PartnerTokenExchange")
-            .WithSummary("Exchange a partner assertion for a worker-scoped access token")
+        app.MapPost("/api/v1/partner/token", MintAsync)
+            .WithName("PartnerToken")
+            .WithSummary("Exchange your partner key for a short-lived, user-scoped token")
             .WithDescription(
-                "Server-to-server only. Post application/x-www-form-urlencoded with grant_type, " +
-                "client_assertion_type, client_assertion, subject_token_type, subject_token and an " +
-                "optional scope. Never call this from a browser — it would put the partner's " +
-                "signing key on a page.")
+                "Server-to-server only: send your API key in the x-partner-key header, and the id " +
+                "of your user in the body. The key must never reach a browser or an app bundle - " +
+                "the short-lived token this returns is what your page uses.")
             .WithTags("Partner authentication")
             .AllowAnonymous()
             .DisableAntiforgery()
             .RequireRateLimiting(TokenRateLimitPolicy)
-            .Produces<TokenExchangeResponse>()
-            .Produces<TokenErrorResponse>(StatusCodes.Status400BadRequest)
-            .Produces<TokenErrorResponse>(StatusCodes.Status401Unauthorized)
-            .Produces<TokenErrorResponse>(StatusCodes.Status429TooManyRequests);
+            .Produces<PartnerTokenResponse>()
+            .Produces<PartnerTokenError>(StatusCodes.Status400BadRequest)
+            .Produces<PartnerTokenError>(StatusCodes.Status401Unauthorized)
+            .Produces<PartnerTokenError>(StatusCodes.Status429TooManyRequests);
 
         return app;
     }
 
-    private static async Task<IResult> ExchangeTokenAsync(
-        HttpContext context,
-        PartnerTokenExchangeService exchange,
+    private static async Task<IResult> MintAsync(
+        [FromHeader(Name = PartnerTokens.HeaderName)] string? apiKey,
+        PartnerTokenRequest? request,
+        PartnerTokenService tokens,
         CancellationToken cancellationToken)
     {
-        if (!context.Request.HasFormContentType)
-        {
-            return Error(
-                TokenErrors.InvalidRequest,
-                "The token endpoint takes application/x-www-form-urlencoded.",
-                StatusCodes.Status400BadRequest);
-        }
+        var outcome = await tokens.MintAsync(apiKey, request, cancellationToken);
 
-        var form = await context.Request.ReadFormAsync(cancellationToken);
+        // A token is a credential, so nothing on the way may cache this response.
+        if (outcome.Token is not null)
+            return JsonWithHeaders.Create(outcome.Token, StatusCodes.Status200OK, NoStore);
 
-        var request = new TokenExchangeRequest(
-            form[TokenExchange.Fields.GrantType],
-            form[TokenExchange.Fields.ClientAssertionType],
-            form[TokenExchange.Fields.ClientAssertion],
-            form[TokenExchange.Fields.SubjectTokenType],
-            form[TokenExchange.Fields.SubjectToken],
-            form[TokenExchange.Fields.Scope]);
-
-        var outcome = await exchange.ExchangeAsync(request, cancellationToken);
-
-        return outcome switch
-        {
-            TokenExchangeOutcome.Success success => TokenResult(success.Response),
-            TokenExchangeOutcome.Failure failure => Error(failure.Error, failure.Description, failure.StatusCode),
-            _ => throw new UnreachableException()
-        };
-    }
-
-    /// <summary>
-    /// RFC 6749 §5.1 requires the token response to be non-cacheable — it carries a credential, and
-    /// an intermediary holding on to one would hand it to whoever asks next.
-    /// </summary>
-    private static IResult TokenResult(TokenExchangeResponse response) =>
-        JsonWithHeaders.Create(response, StatusCodes.Status200OK, NoStore);
-
-    private static IResult Error(string error, string description, int statusCode)
-    {
-        var body = new TokenErrorResponse { Error = error, ErrorDescription = description };
-
-        // RFC 6749 §5.2: a 401 from the token endpoint carries a WWW-Authenticate challenge.
-        return statusCode == StatusCodes.Status401Unauthorized
-            ? JsonWithHeaders.Create(body, statusCode, NoStore.Concat(
-                [("WWW-Authenticate", "Bearer error=\"invalid_client\"")]).ToArray())
-            : JsonWithHeaders.Create(body, statusCode, NoStore);
+        return JsonWithHeaders.Create(
+            new PartnerTokenError { Error = outcome.Error!, Message = outcome.Message },
+            outcome.StatusCode,
+            NoStore);
     }
 
     private static readonly (string Name, string Value)[] NoStore =

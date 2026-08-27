@@ -1,35 +1,13 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Bas.Api.Admin;
 using Bas.Api.Contracts.Bas;
 using Bas.Api.Contracts.Partner;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.Configuration;
 using Shouldly;
 
 namespace Bas.Api.Tests;
-
-/// <summary>A host with an admin key configured.</summary>
-public sealed class AdminFactory : ReconcilerFactory
-{
-    public const string AdminKey = "a-test-admin-key-that-is-long-enough";
-    public const string AdminKeyName = "test-runbook";
-
-    protected override void ConfigureWebHost(IWebHostBuilder builder)
-    {
-        base.ConfigureWebHost(builder);
-
-        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
-            new Dictionary<string, string?>
-            {
-                ["Admin:Keys:0:Name"] = AdminKeyName,
-                ["Admin:Keys:0:Key"] = AdminKey
-            }));
-    }
-}
 
 /// <summary>
 /// The admin surface.
@@ -54,7 +32,7 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
     }
 
     [Fact]
-    public async Task A_wrong_key_is_refused()
+    public async Task A_wrong_admin_key_is_refused()
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/partners");
         request.Headers.Add(AdminAuthenticationHandler.HeaderName, "not-the-key");
@@ -65,45 +43,138 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
     [Fact]
     public async Task A_partner_access_token_cannot_reach_the_admin_surface()
     {
-        // The single most important assertion in this file. A partner holding bas:write must not be
-        // one claim away from suspending a competitor - so admin is a separate authentication
-        // scheme, and a bearer token cannot satisfy it at all rather than merely failing a check
+        // The single most important assertion in this file. A partner holding bas:write must not
+        // be one claim away from suspending a competitor - admin is a separate authentication
+        // scheme, so a bearer token cannot satisfy it at all rather than merely failing a check
         // somebody has to remember to write.
-        var token = await PartnerTokenAsync("admin-isolation");
+        var token = await _factory.MintTokenAsync(_client, "admin-isolation");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/partners");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
 
         var response = await _client.SendAsync(request);
-
         response.StatusCode.ShouldBeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden);
     }
 
     [Fact]
-    public async Task A_valid_key_gets_in()
+    public async Task A_partner_api_key_cannot_reach_the_admin_surface_either()
     {
-        var partners = await Admin().GetFromJsonAsync<List<AdminPartnerResponse>>("/admin/v1/partners");
+        // Same property from the other direction: the credential we issue a partner must not open
+        // the door that manages partners.
+        var apiKey = await _factory.GetPartnerApiKeyAsync();
 
-        partners.ShouldNotBeNull();
-        partners.ShouldContain(p => p.ClientId == BasApiFactory.PartnerClientId);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/partners");
+        request.Headers.Add(AdminAuthenticationHandler.HeaderName, apiKey);
+
+        (await _client.SendAsync(request)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+    }
+
+    // ------------------------------------------------------------------- issuing the key
+
+    [Fact]
+    public async Task Registering_returns_the_api_key_once_and_it_works()
+    {
+        using var scoped = new AdminFactory();
+        await scoped.InitializeAsync();
+        using var client = scoped.CreateClient();
+
+        var created = await scoped.RegisterPartnerAsync("issue-check", "Issue check");
+
+        created.ApiKey.ShouldStartWith(PartnerTokens.KeyPrefix);
+        created.ApiKey.Length.ShouldBeGreaterThanOrEqualTo(40);
+        created.Partner.ApiKeyPrefix.ShouldBe(created.ApiKey[..12]);
+
+        // The key it hands over has to actually authenticate, or the partner finds out it does not.
+        using var minted = await BasApiFactory.RequestTokenAsync(client, "issued-worker", null, created.ApiKey);
+        minted.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        await scoped.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task The_key_is_never_stored_or_shown_again()
+    {
+        // The whole protection: the database keeps a hash, so a dump authenticates nobody. If any
+        // later read could return the key, that would not be true.
+        using var scoped = new AdminFactory();
+        await scoped.InitializeAsync();
+        using var client = scoped.CreateClient();
+
+        var created = await scoped.RegisterPartnerAsync("never-stored", "Never stored");
+        var secretPart = created.ApiKey[PartnerTokens.KeyPrefix.Length..];
+
+        using var read = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/partners/never-stored");
+        read.Headers.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
+        var body = await (await client.SendAsync(read)).Content.ReadAsStringAsync();
+
+        body.ShouldNotContain(secretPart);
+        body.ShouldContain(created.Partner.ApiKeyPrefix!);
+
+        await scoped.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Rotating_the_key_refuses_the_old_one_immediately()
+    {
+        using var scoped = new AdminFactory();
+        await scoped.InitializeAsync();
+        using var client = scoped.CreateClient();
+
+        var oldKey = await scoped.GetPartnerApiKeyAsync();
+        (await BasApiFactory.RequestTokenAsync(client, "rotate-1", null, oldKey))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        using var rotate = new HttpRequestMessage(
+            HttpMethod.Put, $"/admin/v1/partners/{BasApiFactory.PartnerClientId}/key");
+        rotate.Headers.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
+
+        var response = await client.SendAsync(rotate);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        response.Headers.CacheControl!.NoStore.ShouldBeTrue();
+
+        var rotated = (await response.Content.ReadFromJsonAsync<CreatePartnerResult>())!;
+        rotated.ApiKey.ShouldNotBe(oldKey);
+
+        // The old key is dead on the next request - which is the point, for a suspected leak.
+        (await BasApiFactory.RequestTokenAsync(client, "rotate-2", null, oldKey))
+            .StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+
+        (await BasApiFactory.RequestTokenAsync(client, "rotate-3", null, rotated.ApiKey))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        await scoped.DisposeAsync();
+    }
+
+    // --------------------------------------------------------------------- the kill switch
+
+    [Fact]
+    public async Task Suspending_a_partner_stops_token_minting_immediately()
+    {
+        using var scoped = new AdminFactory();
+        await scoped.InitializeAsync();
+        using var client = scoped.CreateClient();
+
+        var apiKey = await scoped.GetPartnerApiKeyAsync();
+        (await BasApiFactory.RequestTokenAsync(client, "kill-1", null, apiKey))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        using var suspend = new HttpRequestMessage(
+            HttpMethod.Post, $"/admin/v1/partners/{BasApiFactory.PartnerClientId}/suspend")
+        {
+            Content = JsonContent.Create(new SuspendRequest { Reason = "testing the kill switch" })
+        };
+        suspend.Headers.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
+        (await client.SendAsync(suspend)).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        // Refused without a restart or a redeploy - and with the same answer as a wrong key, so a
+        // caller cannot tell suspension apart from revocation.
+        (await BasApiFactory.RequestTokenAsync(client, "kill-2", null, apiKey))
+            .StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+
+        await scoped.DisposeAsync();
     }
 
     // ------------------------------------------------------------------------ what it shows
-
-    [Fact]
-    public async Task A_partner_is_shown_without_anything_secret()
-    {
-        var response = await Admin().GetAsync($"/admin/v1/partners/{BasApiFactory.PartnerClientId}");
-        var body = await response.Content.ReadAsStringAsync();
-
-        // A fingerprint is enough to confirm a rotation took; the key itself would just make the
-        // page unreadable, and the webhook secret must never leave the database.
-        body.ShouldNotContain("BEGIN PUBLIC KEY");
-        body.ShouldNotContain(WebhookFactory.WebhookSecret);
-
-        var partner = await response.Content.ReadFromJsonAsync<AdminPartnerResponse>();
-        partner!.PublicKeyFingerprint.ShouldNotBeNullOrWhiteSpace();
-    }
 
     [Fact]
     public async Task Lodgements_never_carry_a_TFN()
@@ -129,168 +200,71 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
         row.SyncStatus.ShouldBe("Pending");
     }
 
-    // --------------------------------------------------------------------- the kill switch
+    // --------------------------------------------------------------------------- webhooks
 
     [Fact]
-    public async Task Suspending_a_partner_stops_token_exchange_immediately()
+    public async Task Setting_a_webhook_issues_a_secret_once()
     {
         using var scoped = new AdminFactory();
         await scoped.InitializeAsync();
         using var client = scoped.CreateClient();
+        await scoped.GetPartnerApiKeyAsync();
 
-        // Works before.
-        (await ExchangeAsync(scoped, client, "kill-switch")).StatusCode.ShouldBe(HttpStatusCode.OK);
+        var first = await SetWebhookAsync(client, "https://partner.test/hooks", newSecret: false);
+        first.Secret.ShouldNotBeNullOrWhiteSpace("a URL with no secret must issue one");
+        first.Partner.HasWebhookSecret.ShouldBeTrue();
 
-        using var suspend = new HttpRequestMessage(
-            HttpMethod.Post, $"/admin/v1/partners/{BasApiFactory.PartnerClientId}/suspend")
-        {
-            Content = JsonContent.Create(new SuspendRequest { Reason = "testing the kill switch" })
-        };
-        suspend.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
+        // Changing the address alone must NOT rotate the secret - that would silently break every
+        // signature the partner verifies, with nothing to explain it.
+        var moved = await SetWebhookAsync(client, "https://partner.test/hooks/v2", newSecret: false);
+        moved.Secret.ShouldBeNull();
+        moved.Partner.WebhookUrl.ShouldBe("https://partner.test/hooks/v2");
 
-        (await client.SendAsync(suspend)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        var rotated = await SetWebhookAsync(client, "https://partner.test/hooks/v2", newSecret: true);
+        rotated.Secret.ShouldNotBeNullOrWhiteSpace();
+        rotated.Secret.ShouldNotBe(first.Secret);
 
-        // And refused after, without a restart or a redeploy.
-        var after = await ExchangeAsync(scoped, client, "kill-switch-2");
-        after.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
-
-        await scoped.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Rotating_the_key_refuses_assertions_signed_with_the_old_one()
-    {
-        using var scoped = new AdminFactory();
-        await scoped.InitializeAsync();
-        using var client = scoped.CreateClient();
-
-        using var replacement = new PartnerSigner(BasApiFactory.PartnerClientId, BasApiFactory.Issuer);
-
-        using var rotate = new HttpRequestMessage(
-            HttpMethod.Put, $"/admin/v1/partners/{BasApiFactory.PartnerClientId}/key")
-        {
-            Content = JsonContent.Create(new RotateKeyRequest { PublicKeyPem = replacement.PublicKeyPem })
-        };
-        rotate.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
-
-        (await client.SendAsync(rotate)).StatusCode.ShouldBe(HttpStatusCode.OK);
-
-        // The old key is dead on the next request - which is the point, for a suspected leak.
-        (await ExchangeAsync(scoped, client, "rotated-old")).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
-
-        // And the new one works.
-        var now = scoped.Clock.GetUtcNow();
-        var form = new Dictionary<string, string>
-        {
-            [TokenExchange.Fields.GrantType] = TokenExchange.GrantType,
-            [TokenExchange.Fields.ClientAssertionType] = TokenExchange.ClientAssertionType,
-            [TokenExchange.Fields.ClientAssertion] = replacement.CreateClientAssertion(now),
-            [TokenExchange.Fields.SubjectTokenType] = TokenExchange.SubjectTokenType,
-            [TokenExchange.Fields.SubjectToken] = replacement.CreateSubjectToken("rotated-new", now)
-        };
-
-        var response = await client.PostAsync("/api/v1/partner/token", new FormUrlEncodedContent(form));
-        response.StatusCode.ShouldBe(HttpStatusCode.OK);
-
-        await scoped.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task Registering_without_a_key_generates_one_and_returns_it_once()
-    {
-        using var scoped = new AdminFactory();
-        await scoped.InitializeAsync();
-        using var client = scoped.CreateClient();
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/admin/v1/partners")
-        {
-            Content = JsonContent.Create(new CreatePartnerRequest
-            {
-                ClientId = "generated-key",
-                Name = "Generated",
-                AllowedScopes = "bas:read bas:write",
-            })
-        };
-        request.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
-
-        var response = await client.SendAsync(request);
-        response.StatusCode.ShouldBe(HttpStatusCode.Created);
-
-        // A response carrying a private key must not sit in a cache on its way to being copied.
-        response.Headers.CacheControl!.NoStore.ShouldBeTrue();
-
-        var created = await response.Content.ReadFromJsonAsync<CreatePartnerResult>();
-        created!.PrivateKeyPem.ShouldNotBeNullOrWhiteSpace();
-        created.PrivateKeyPem!.ShouldContain("PRIVATE KEY");
-
-        // The key it hands over has to actually work, or the partner discovers it does not.
-        using var signer = PartnerSigner.FromPrivateKey("generated-key", BasApiFactory.Issuer, created.PrivateKeyPem);
-        var now = scoped.Clock.GetUtcNow();
-
-        var exchange = await client.PostAsync("/api/v1/partner/token", new FormUrlEncodedContent(
-            new Dictionary<string, string>
-            {
-                [TokenExchange.Fields.GrantType] = TokenExchange.GrantType,
-                [TokenExchange.Fields.ClientAssertionType] = TokenExchange.ClientAssertionType,
-                [TokenExchange.Fields.ClientAssertion] = signer.CreateClientAssertion(now),
-                [TokenExchange.Fields.SubjectTokenType] = TokenExchange.SubjectTokenType,
-                [TokenExchange.Fields.SubjectToken] = signer.CreateSubjectToken("generated-worker", now),
-            }));
-
-        exchange.StatusCode.ShouldBe(HttpStatusCode.OK);
-
-        await scoped.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task The_generated_private_key_is_never_stored()
-    {
-        // The whole protection is that it cannot be fetched again. If a later read could return it,
-        // a database dump would hand over every partner's identity.
-        using var scoped = new AdminFactory();
-        await scoped.InitializeAsync();
-        using var client = scoped.CreateClient();
-
-        using var create = new HttpRequestMessage(HttpMethod.Post, "/admin/v1/partners")
-        {
-            Content = JsonContent.Create(new CreatePartnerRequest
-            {
-                ClientId = "not-stored", Name = "Not stored", AllowedScopes = "bas:read",
-            })
-        };
-        create.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
-        var created = await (await client.SendAsync(create)).Content.ReadFromJsonAsync<CreatePartnerResult>();
-
-        using var read = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/partners/not-stored");
-        read.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
+        // And the secret is never readable afterwards.
+        using var read = new HttpRequestMessage(
+            HttpMethod.Get, $"/admin/v1/partners/{BasApiFactory.PartnerClientId}");
+        read.Headers.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
         var body = await (await client.SendAsync(read)).Content.ReadAsStringAsync();
-
-        body.ShouldNotContain("PRIVATE KEY");
-        // A distinctive slice of the key material, so this cannot pass on a technicality.
-        var material = new string(created!.PrivateKeyPem!
-            .Replace("-----BEGIN PRIVATE KEY-----", "")
-            .Replace("-----END PRIVATE KEY-----", "")
-            .Where(char.IsLetterOrDigit).Take(40).ToArray());
-
-        body.ShouldNotContain(material);
+        body.ShouldNotContain(rotated.Secret!);
 
         await scoped.DisposeAsync();
     }
 
     [Fact]
-    public async Task An_invalid_key_is_refused_at_rotation_rather_than_at_the_partners_next_call()
+    public async Task Clearing_the_webhook_retires_its_secret()
     {
-        using var rsa = RSA.Create(2048);
+        using var scoped = new AdminFactory();
+        await scoped.InitializeAsync();
+        using var client = scoped.CreateClient();
+        await scoped.GetPartnerApiKeyAsync();
 
-        using var rotate = new HttpRequestMessage(
-            HttpMethod.Put, $"/admin/v1/partners/{BasApiFactory.PartnerClientId}/key")
+        await SetWebhookAsync(client, "https://partner.test/hooks", newSecret: false);
+        var cleared = await SetWebhookAsync(client, null, newSecret: false);
+
+        cleared.Partner.WebhookUrl.ShouldBeNull();
+        // A secret for an endpoint that no longer exists is just something else to leak.
+        cleared.Partner.HasWebhookSecret.ShouldBeFalse();
+
+        await scoped.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task A_webhook_url_must_be_https()
+    {
+        await _factory.GetPartnerApiKeyAsync();
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, $"/admin/v1/partners/{BasApiFactory.PartnerClientId}/webhook")
         {
-            // Their private half. Accepting it would leave us holding their signing key.
-            Content = JsonContent.Create(new RotateKeyRequest { PublicKeyPem = rsa.ExportPkcs8PrivateKeyPem() })
+            Content = JsonContent.Create(new SetWebhookRequest { Url = "http://partner.test/hooks" })
         };
-        rotate.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
+        request.Headers.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
 
-        (await _client.SendAsync(rotate)).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await _client.SendAsync(request)).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
     }
 
     // --------------------------------------------------------------------------------- audit
@@ -301,28 +275,28 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
         using var scoped = new AdminFactory();
         await scoped.InitializeAsync();
         using var client = scoped.CreateClient();
+        await scoped.GetPartnerApiKeyAsync();
 
         using var suspend = new HttpRequestMessage(
             HttpMethod.Post, $"/admin/v1/partners/{BasApiFactory.PartnerClientId}/suspend")
         {
             Content = JsonContent.Create(new SuspendRequest { Reason = "audited" })
         };
-        suspend.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
+        suspend.Headers.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
         await client.SendAsync(suspend);
 
         using var read = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/audit");
-        read.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
-
+        read.Headers.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
         var entries = await (await client.SendAsync(read)).Content
             .ReadFromJsonAsync<List<AuditEntryResponse>>();
 
-        var entry = entries!.ShouldHaveSingleItem();
-        entry.Action.ShouldBe("partner.suspended");
-        entry.Subject.ShouldBe(BasApiFactory.PartnerClientId);
-        entry.Detail.ShouldBe("audited");
+        entries!.Select(e => e.Action).ShouldContain("partner.created");
+        var suspended = entries.Single(e => e.Action == "partner.suspended");
+        suspended.Subject.ShouldBe(BasApiFactory.PartnerClientId);
+        suspended.Detail.ShouldBe("audited");
 
         // Named keys, so an entry says which caller rather than "someone".
-        entry.Actor.ShouldBe(AdminFactory.AdminKeyName);
+        entries.ShouldAllBe(e => e.Actor == BasApiFactory.AdminKeyName);
 
         await scoped.DisposeAsync();
     }
@@ -330,19 +304,18 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
     [Fact]
     public async Task Reads_are_not_audited()
     {
-        // Every partner-facing request already logs its partner and token id. Recording every admin
-        // GET as well would bury the handful of entries that actually matter.
+        // Every partner-facing request already logs its partner and token id. Recording every
+        // admin GET as well would bury the handful of entries that actually matter.
         using var scoped = new AdminFactory();
         await scoped.InitializeAsync();
         using var client = scoped.CreateClient();
 
         using var read = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/partners");
-        read.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
+        read.Headers.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
         await client.SendAsync(read);
 
         using var audit = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/audit");
-        audit.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
-
+        audit.Headers.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
         var entries = await (await client.SendAsync(audit)).Content
             .ReadFromJsonAsync<List<AuditEntryResponse>>();
 
@@ -352,28 +325,20 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
     }
 
     [Fact]
-    public async Task A_key_rotation_records_fingerprints_and_not_key_material()
+    public async Task The_audit_records_key_prefixes_and_never_key_material()
     {
         using var scoped = new AdminFactory();
         await scoped.InitializeAsync();
         using var client = scoped.CreateClient();
 
-        using var replacement = new PartnerSigner(BasApiFactory.PartnerClientId, BasApiFactory.Issuer);
-
-        using var rotate = new HttpRequestMessage(
-            HttpMethod.Put, $"/admin/v1/partners/{BasApiFactory.PartnerClientId}/key")
-        {
-            Content = JsonContent.Create(new RotateKeyRequest { PublicKeyPem = replacement.PublicKeyPem })
-        };
-        rotate.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
-        await client.SendAsync(rotate);
+        var created = await scoped.RegisterPartnerAsync("audit-prefix", "Audit prefix");
 
         using var audit = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/audit");
-        audit.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
+        audit.Headers.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
         var body = await (await client.SendAsync(audit)).Content.ReadAsStringAsync();
 
-        body.ShouldContain("partner.key_rotated");
-        body.ShouldNotContain("BEGIN PUBLIC KEY");
+        body.ShouldContain(created.Partner.ApiKeyPrefix!);
+        body.ShouldNotContain(created.ApiKey[PartnerTokens.KeyPrefix.Length..]);
 
         await scoped.DisposeAsync();
     }
@@ -383,9 +348,7 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
     [Fact]
     public async Task The_console_sends_a_signed_out_visitor_to_the_login_page()
     {
-        // Never a JSON 401. An operator whose cookie expired mid-task needs somewhere to go, and
-        // the fallback policy used to catch these routes before the router ran and answer a browser
-        // with application/problem+json.
+        // Never a JSON 401: an operator whose cookie expired mid-task needs somewhere to go.
         foreach (var path in new[] { "/admin", "/admin/lodgements", "/admin/partners", "/admin/audit" })
         {
             var response = await _client.GetAsync(path);
@@ -401,9 +364,9 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
     public async Task The_sign_in_form_posts_the_way_a_browser_posts_it()
     {
         // Submits EVERY hidden field the page rendered, duplicates included, because that is what a
-        // browser does. An earlier version of this test picked the first match of each name and so
-        // sailed past a form that rendered __RequestVerificationToken twice - the browser posted
-        // both, antiforgery saw "token1,token2", and every sign-in answered a bare HTTP 400.
+        // browser does. An earlier version picked the first match of each name and sailed past a
+        // form that rendered the antiforgery token twice - the browser posted both, and every
+        // sign-in answered a bare HTTP 400.
         var page = await _client.GetStringAsync("/admin/login");
 
         var hidden = Regex.Matches(page, "<input[^>]*type=\"hidden\"[^>]*>")
@@ -414,9 +377,6 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
             .Where(f => f.Name.Length > 0)
             .ToList();
 
-        hidden.ShouldContain(f => f.Name == "__RequestVerificationToken");
-
-        // One token, or the browser posts a value antiforgery cannot read.
         hidden.Count(f => f.Name == "__RequestVerificationToken")
             .ShouldBe(1, "the form rendered more than one antiforgery token");
 
@@ -427,8 +387,8 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
 
         var response = await _client.PostAsync("/admin/login", new FormUrlEncodedContent(body));
 
-        // Re-rendering "those details were not accepted" is the pass. A 400 means antiforgery
-        // rejected the page's own token, which is the failure this exists to catch.
+        // Re-rendering "those details were not accepted" is the pass; a 400 means antiforgery
+        // rejected the page's own token.
         response.StatusCode.ShouldNotBe(HttpStatusCode.BadRequest, "antiforgery rejected its own token");
     }
 
@@ -437,38 +397,31 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
     private HttpClient Admin()
     {
         var client = _factory.CreateClient();
-        client.DefaultRequestHeaders.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
+        client.DefaultRequestHeaders.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
         return client;
     }
 
-    private static Task<HttpResponseMessage> ExchangeAsync(BasApiFactory factory, HttpClient client, string subject)
+    private static async Task<WebhookResult> SetWebhookAsync(HttpClient client, string? url, bool newSecret)
     {
-        var now = factory.Clock.GetUtcNow();
-
-        return client.PostAsync("/api/v1/partner/token", new FormUrlEncodedContent(new Dictionary<string, string>
+        using var request = new HttpRequestMessage(
+            HttpMethod.Put, $"/admin/v1/partners/{BasApiFactory.PartnerClientId}/webhook")
         {
-            [TokenExchange.Fields.GrantType] = TokenExchange.GrantType,
-            [TokenExchange.Fields.ClientAssertionType] = TokenExchange.ClientAssertionType,
-            [TokenExchange.Fields.ClientAssertion] = factory.Partner.CreateClientAssertion(now),
-            [TokenExchange.Fields.SubjectTokenType] = TokenExchange.SubjectTokenType,
-            [TokenExchange.Fields.SubjectToken] = factory.Partner.CreateSubjectToken(subject, now)
-        }));
-    }
+            Content = JsonContent.Create(new SetWebhookRequest { Url = url, NewSecret = newSecret })
+        };
+        request.Headers.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
 
-    private async Task<string> PartnerTokenAsync(string subject)
-    {
-        using var response = await ExchangeAsync(_factory, _client, subject);
+        var response = await client.SendAsync(request);
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        return (await response.Content.ReadFromJsonAsync<TokenExchangeResponse>())!.AccessToken;
+        return (await response.Content.ReadFromJsonAsync<WebhookResult>())!;
     }
 
     private async Task<Guid> SubmitStatementAsync(string subject)
     {
-        var token = await PartnerTokenAsync(subject);
+        var token = await _factory.MintTokenAsync(_client, subject);
 
         using var client = _factory.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
 
         await client.PutAsJsonAsync("/api/v1/workers/me", new WorkerIdentityRequest
         {

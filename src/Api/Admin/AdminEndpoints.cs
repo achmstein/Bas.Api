@@ -64,22 +64,25 @@ public static class AdminEndpoints
                 created, StatusCodes.Status201Created,
                 [("Cache-Control", "no-store"), ("Pragma", "no-cache")]);
         })
-            .WithSummary("Register a partner")
+            .WithSummary("Register a partner and issue their API key")
             .WithDescription(
-                "Omit publicKeyPem and a key pair is generated here; the private half comes back in " +
-                "this response and is never stored, so it cannot be retrieved again. Supply " +
-                "publicKeyPem instead when the partner generated their own.");
+                "The key comes back in this response and is never stored - only its hash is - so it " +
+                "cannot be retrieved again. Save it here or rotate for a new one.");
 
         group.MapPut("/partners/{clientId}/key", async (
-            string clientId, RotateKeyRequest request, AdminService admin, CancellationToken ct) =>
+            string clientId, AdminService admin, CancellationToken ct) =>
         {
-            var (partner, error) = await admin.RotateKeyAsync(clientId, request, ct);
-            return error is not null ? error.ToResult() : Results.Ok(partner);
+            var (result, error) = await admin.RotateKeyAsync(clientId, ct);
+
+            return error is not null
+                ? error.ToResult()
+                : JsonWithHeaders.Create(result, StatusCodes.Status200OK,
+                    [("Cache-Control", "no-store"), ("Pragma", "no-cache")]);
         })
-            .WithSummary("Replace the partner's signing key")
+            .WithSummary("Issue a new API key, refusing the old one immediately")
             .WithDescription(
-                "Takes effect on the next request. Assertions signed with the old key are refused " +
-                "immediately, so coordinate with the partner unless this is a response to a leak.");
+                "The response is the only place the new key ever appears. Coordinate with the " +
+                "partner unless this is a response to a leak - their calls fail until they switch.");
 
         group.MapPost("/partners/{clientId}/suspend", async (
             string clientId, [FromBody] SuspendRequest? request, AdminService admin, CancellationToken ct) =>
@@ -99,6 +102,23 @@ public static class AdminEndpoints
             return error is not null ? error.ToResult() : Results.Ok(partner);
         })
             .WithSummary("Resume a suspended partner");
+
+        group.MapPut("/partners/{clientId}/webhook", async (
+            string clientId, SetWebhookRequest request, AdminService admin, CancellationToken ct) =>
+        {
+            var (result, error) = await admin.SetWebhookAsync(clientId, request.Url, request.NewSecret, ct);
+
+            // The body may carry a freshly issued secret.
+            return error is not null
+                ? error.ToResult()
+                : JsonWithHeaders.Create(result, StatusCodes.Status200OK,
+                    [("Cache-Control", "no-store"), ("Pragma", "no-cache")]);
+        })
+            .WithSummary("Set or clear where a partner's status changes are delivered")
+            .WithDescription(
+                "An empty url removes the webhook and its secret; the partner then polls, which " +
+                "always works. A new secret is issued only when asked for, or when there is none " +
+                "yet - changing the address alone must not silently break their signature checks.");
 
         // ───── lodgements ─────
 
@@ -160,15 +180,7 @@ public sealed record CreatePartnerRequest
     [StringLength(200, MinimumLength = 1)]
     public required string Name { get; init; }
 
-    /// <summary>
-    /// The partner's PEM-encoded <b>public</b> key, if they generated their own. A private key is
-    /// refused.
-    ///
-    /// <para>Leave it empty and a key pair is generated here instead. The private half is returned
-    /// once, in that response, and never stored — so it cannot be recovered afterwards and a
-    /// database dump cannot yield it.</para>
-    /// </summary>
-    public string? PublicKeyPem { get; init; }
+
 
     /// <summary>Space-delimited. Every scope must be one this service knows.</summary>
     [Required]
@@ -179,11 +191,23 @@ public sealed record CreatePartnerRequest
     public string? WebhookSecret { get; init; }
 }
 
-/// <summary>A replacement signing key.</summary>
-public sealed record RotateKeyRequest
+/// <summary>Where to deliver a partner's status changes.</summary>
+public sealed record SetWebhookRequest
 {
-    [Required]
-    public required string PublicKeyPem { get; init; }
+    /// <summary>An absolute https URL. Empty removes the webhook and its secret.</summary>
+    public string? Url { get; init; }
+
+    /// <summary>Issue a new signing secret. The old one stops working immediately.</summary>
+    public bool NewSecret { get; init; }
+}
+
+/// <summary>A partner's webhook settings, and the secret if one was just issued.</summary>
+public sealed record WebhookResult
+{
+    public required AdminPartnerResponse Partner { get; init; }
+
+    /// <summary>Present only when a secret was just issued. Shown once; send it to the partner.</summary>
+    public string? Secret { get; init; }
 }
 
 /// <summary>Why a partner was suspended or resumed. Recorded in the audit log.</summary>
@@ -192,18 +216,16 @@ public sealed record SuspendRequest
     public string? Reason { get; init; }
 }
 
-/// <summary>
-/// A newly registered partner, and the private key if one was generated for them.
-/// </summary>
+/// <summary>A newly registered partner, or one whose key was just rotated.</summary>
 public sealed record CreatePartnerResult
 {
     public required AdminPartnerResponse Partner { get; init; }
 
     /// <summary>
-    /// The private key, present only in this one response and only when it was generated here.
-    /// Nothing stores it, so it cannot be shown again.
+    /// The API key, present only in this one response. Nothing stores it — the database keeps its
+    /// hash — so it cannot be shown again.
     /// </summary>
-    public string? PrivateKeyPem { get; init; }
+    public required string ApiKey { get; init; }
 }
 
 /// <summary>A partner, as an operator sees them. Carries no secret.</summary>
@@ -218,8 +240,8 @@ public sealed record AdminPartnerResponse
 
     public required string AllowedScopes { get; init; }
 
-    /// <summary>Short hash of the registered public key — enough to confirm a rotation took.</summary>
-    public required string PublicKeyFingerprint { get; init; }
+    /// <summary>The readable start of their key (<c>bas_xxxxxxxx</c>). Null until one is issued.</summary>
+    public string? ApiKeyPrefix { get; init; }
 
     public string? WebhookUrl { get; init; }
 

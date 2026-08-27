@@ -30,7 +30,6 @@ public sealed class DatabaseStartupService(
     IServiceScopeFactory scopeFactory,
     ISigningKeyStore keyStore,
     IOptions<DatabaseOptions> databaseOptions,
-    IOptions<PartnerRegistrationOptions> partnerOptions,
     TimeProvider timeProvider,
     ILogger<DatabaseStartupService> logger) : IHostedService
 {
@@ -45,7 +44,10 @@ public sealed class DatabaseStartupService(
             await db.Database.MigrateAsync(cancellationToken);
         }
 
-        await ReconcilePartnersAsync(db, cancellationToken);
+        if (!await db.Partners.AnyAsync(cancellationToken))
+        {
+            logger.LogInformation("No partners are registered yet. Register one from /admin/partners.");
+        }
 
         // Admin accounts, so a fresh deployment has someone who can sign in.
         await scope.ServiceProvider.GetRequiredService<AdminIdentitySeeder>().SeedAsync(cancellationToken);
@@ -55,69 +57,4 @@ public sealed class DatabaseStartupService(
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    private async Task ReconcilePartnersAsync(BasDbContext db, CancellationToken cancellationToken)
-    {
-        var registrations = partnerOptions.Value.Registrations;
-        if (registrations.Count == 0)
-        {
-            logger.LogWarning(
-                "No partners are registered. Token exchange will refuse every caller until a " +
-                "partner is configured under the '{Section}' section.", PartnerRegistrationOptions.SectionName);
-            return;
-        }
-
-        var now = timeProvider.GetUtcNow();
-
-        foreach (var registration in registrations)
-        {
-            var status = registration.Active ? PartnerStatus.Active : PartnerStatus.Suspended;
-
-            var existing = await db.Partners
-                .SingleOrDefaultAsync(p => p.ClientId == registration.ClientId, cancellationToken);
-
-            if (existing is null)
-            {
-                db.Partners.Add(new Partner
-                {
-                    ClientId = registration.ClientId,
-                    Name = registration.Name,
-                    PublicKeyPem = registration.PublicKeyPem,
-                    WebhookUrl = registration.WebhookUrl,
-                    WebhookSecret = registration.WebhookSecret,
-                    AllowedScopes = registration.AllowedScopes,
-                    Status = status,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                });
-
-                logger.LogInformation(
-                    "Registered partner {ClientId} ({Name}) with scopes [{Scopes}].",
-                    registration.ClientId, registration.Name, registration.AllowedScopes);
-
-                continue;
-            }
-
-            // Bootstrap only. Once a partner exists, the admin API is the single source of truth
-            // for it - otherwise rotating a key through the API would be silently undone by the
-            // next deploy, which is the worst of both worlds. Differences are reported rather than
-            // applied, so a stale config file is visible instead of dangerous.
-            var differs =
-                existing.Name != registration.Name ||
-                existing.PublicKeyPem != registration.PublicKeyPem ||
-                existing.AllowedScopes != registration.AllowedScopes ||
-                existing.WebhookUrl != registration.WebhookUrl ||
-                existing.Status != status;
-
-            if (differs)
-            {
-                logger.LogWarning(
-                    "Partner {ClientId} differs from configuration, which is bootstrap-only - the admin " +
-                    "API is authoritative. Configuration was NOT applied. Change it through the API, or " +
-                    "delete the row to re-seed.", registration.ClientId);
-            }
-        }
-
-        await db.SaveChangesAsync(cancellationToken);
-    }
 }

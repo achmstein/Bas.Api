@@ -12,9 +12,8 @@ public enum PartnerStatus
 }
 
 /// <summary>
-/// A registered API partner — MyGigsters is the first. There is deliberately <b>no secret</b>
-/// here: partners authenticate by signing a JWT with their own private key and we hold only the
-/// public half, so nothing secret ever crosses the wire or sits in this table.
+/// A registered API partner — MyGigsters is the first. Partners authenticate with an API key this
+/// service issues; the key itself is never stored — only its hash — so this table cannot leak one.
 /// </summary>
 public sealed class Partner
 {
@@ -27,10 +26,17 @@ public sealed class Partner
     public required string Name { get; set; }
 
     /// <summary>
-    /// The partner's public signing key, PEM-encoded (RSA or ECDSA). Public by definition — this
-    /// column is not a secret and does not need protecting. We only ever verify with it.
+    /// SHA-256 of the API key, lowercase hex. The key itself exists only in the response that
+    /// issued it and in the partner's secret manager — a dump of this table authenticates nobody.
+    /// Null means no key has been issued yet, and every token request is refused.
     /// </summary>
-    public required string PublicKeyPem { get; set; }
+    public string? ApiKeyHash { get; set; }
+
+    /// <summary>
+    /// The first characters of the key (<c>bas_xxxxxxxx</c>), kept readable for lookup and so an
+    /// operator can tell which key a partner holds without ever seeing it.
+    /// </summary>
+    public string? ApiKeyPrefix { get; set; }
 
     public PartnerStatus Status { get; set; } = PartnerStatus.Active;
 

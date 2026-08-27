@@ -1,9 +1,10 @@
-using Bas.Api.Data;
+using System.Net.Http.Json;
+using Bas.Api.Admin;
+using Bas.Api.Contracts.Partner;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
 using Testcontainers.PostgreSql;
@@ -12,19 +13,25 @@ namespace Bas.Api.Tests;
 
 /// <summary>
 /// Hosts the real application against a real Postgres: real routing, real authentication
-/// middleware, real authorization policies, real startup reconciliation, and the actual EF
-/// migrations rather than a schema conjured from the model.
+/// middleware, real authorization policies, and the actual EF migrations rather than a schema
+/// conjured from the model.
 ///
-/// <para>Requires a running Docker daemon. That is a deliberate cost. An in-memory SQLite would
-/// remove it, but only by giving up the two things this suite most needs — migrations are applied
-/// here exactly as a deploy applies them, and writes genuinely run in parallel, so the unique index
-/// that arbitrates concurrent provisioning is actually exercised.</para>
+/// <para>Partners are registered through the real admin API rather than seeded around it, so every
+/// test's partner exists the same way a production partner does — including the API key, which is
+/// issued once and never stored.</para>
+///
+/// <para>Requires a running Docker daemon. That is a deliberate cost: an in-memory SQLite would
+/// remove it, but only by skipping the migrations entirely and serialising the concurrency tests
+/// into no-ops.</para>
 /// </summary>
 public class BasApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
     public const string Issuer = "https://bas.test";
     public const string Audience = "bas-api";
     public const string PartnerClientId = "mygigsters-test";
+
+    public const string AdminKey = "a-test-admin-key-that-is-long-enough";
+    public const string AdminKeyName = "test-runbook";
 
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
         .WithImage("postgres:17-alpine")
@@ -33,33 +40,19 @@ public class BasApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         .WithPassword("bas")
         .Build();
 
-    /// <summary>The partner this host is configured to trust.</summary>
-    public PartnerSigner Partner { get; } = new(PartnerClientId, Issuer);
+    private readonly SemaphoreSlim _partnerGate = new(1, 1);
+    private string? _partnerApiKey;
 
     /// <summary>Controllable clock, so expiry tests do not depend on real waiting.</summary>
     public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 8, 27, 0, 0, 0, TimeSpan.Zero));
 
-    /// <summary>Scopes granted to <see cref="Partner"/>. Set before the first request.</summary>
-    public string AllowedScopes { get; set; } = "bas:read bas:write profile:write";
-
-    /// <summary>Whether <see cref="Partner"/> is active. Set before the first request.</summary>
-    public bool PartnerActive { get; set; } = true;
-
-    /// <summary>xunit runs this once for the class fixture, before the first test.</summary>
-    public async ValueTask InitializeAsync()
-    {
-        await _postgres.StartAsync();
-
-        // Force the host up now, so a startup failure surfaces here rather than as a puzzling
-        // failure inside whichever test happened to run first.
-        _ = Services;
-    }
+    public async ValueTask InitializeAsync() => await _postgres.StartAsync();
 
     public override async ValueTask DisposeAsync()
     {
         await base.DisposeAsync();
         await _postgres.DisposeAsync();
-        Partner.Dispose();
+        _partnerGate.Dispose();
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -75,18 +68,15 @@ public class BasApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             // The real migrations, applied the way a deploy applies them.
             ["Database:MigrateOnStartup"] = "true",
 
+            // No admin account: nothing here signs in through the console, and the seeded default
+            // would otherwise be created on every fixture. The named key is the admin credential.
+            ["Admin:Users:0:Email"] = "",
+            ["Admin:Keys:0:Name"] = AdminKeyName,
+            ["Admin:Keys:0:Key"] = AdminKey,
+
             ["PracticeManager:Endpoint"] = "http://practicemanager.invalid:8081",
             ["Reconciler:Enabled"] = "false",
-            // No admin account in the test host: the seeded default would be created on every
-            // fixture, and nothing here signs in through the console.
-            ["Admin:Users:0:Email"] = "",
-
-            // Registered through configuration, exercising the same reconciliation path a deploy uses.
-            ["Partners:Registrations:0:ClientId"] = PartnerClientId,
-            ["Partners:Registrations:0:Name"] = "MyGigsters (test)",
-            ["Partners:Registrations:0:PublicKeyPem"] = Partner.PublicKeyPem,
-            ["Partners:Registrations:0:AllowedScopes"] = AllowedScopes,
-            ["Partners:Registrations:0:Active"] = PartnerActive.ToString()
+            ["Webhooks:Enabled"] = "false"
         }));
 
         builder.ConfigureServices(services =>
@@ -96,6 +86,106 @@ public class BasApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         });
     }
 
+    /// <summary>
+    /// The test partner's API key, registering the partner on first use — through the real admin
+    /// endpoint, so the key arrives exactly the way a production key does.
+    /// </summary>
+    public async Task<string> GetPartnerApiKeyAsync()
+    {
+        if (_partnerApiKey is not null)
+            return _partnerApiKey;
+
+        await _partnerGate.WaitAsync();
+        try
+        {
+            if (_partnerApiKey is not null)
+                return _partnerApiKey;
+
+            var created = await RegisterPartnerAsync(PartnerClientId, "MyGigsters (test)");
+            _partnerApiKey = created.ApiKey;
+            return _partnerApiKey;
+        }
+        finally
+        {
+            _partnerGate.Release();
+        }
+    }
+
+    /// <summary>Registers a partner through the real admin endpoint.</summary>
+    public async Task<CreatePartnerResult> RegisterPartnerAsync(
+        string clientId, string name, string scopes = "bas:read bas:write profile:write")
+    {
+        using var client = CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/admin/v1/partners")
+        {
+            Content = JsonContent.Create(new CreatePartnerRequest
+            {
+                ClientId = clientId,
+                Name = name,
+                AllowedScopes = scopes
+            })
+        };
+        request.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminKey);
+
+        using var response = await client.SendAsync(request);
+
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(
+                $"Registering partner '{clientId}' failed: HTTP {(int)response.StatusCode} " +
+                $"{await response.Content.ReadAsStringAsync()}");
+
+        return (await response.Content.ReadFromJsonAsync<CreatePartnerResult>())!;
+    }
+
+    /// <summary>Mints a worker token the way a partner's server does.</summary>
+    public async Task<PartnerTokenResponse> MintTokenAsync(
+        HttpClient client, string subject, string? scope = null, string? apiKey = null)
+    {
+        apiKey ??= await GetPartnerApiKeyAsync();
+
+        using var response = await RequestTokenAsync(client, subject, scope, apiKey);
+
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(
+                $"Token mint for '{subject}' failed: HTTP {(int)response.StatusCode} " +
+                $"{await response.Content.ReadAsStringAsync()}");
+
+        return (await response.Content.ReadFromJsonAsync<PartnerTokenResponse>())!;
+    }
+
+    /// <summary>The raw token request, for tests asserting on refusals.</summary>
+    public static Task<HttpResponseMessage> RequestTokenAsync(
+        HttpClient client, string subject, string? scope, string apiKey)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/partner/token")
+        {
+            Content = JsonContent.Create(new PartnerTokenRequest { Subject = subject, Scope = scope })
+        };
+        request.Headers.Add(PartnerTokens.HeaderName, apiKey);
+
+        return client.SendAsync(request);
+    }
+
     /// <summary>A scope for arranging and asserting directly against the database.</summary>
     public AsyncServiceScope CreateDbScope() => Services.CreateAsyncScope();
 }
+
+/// <summary>Kept as distinct types so each test class gets its own container and database.</summary>
+public class ReconcilerFactory : BasApiFactory
+{
+    public FakePracticeManager Gateway { get; } = new();
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+
+        builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<Bas.Api.Sync.IPracticeManagerGateway>();
+            services.AddSingleton<Bas.Api.Sync.IPracticeManagerGateway>(Gateway);
+        });
+    }
+}
+
+/// <summary>An admin-focused host. Identical configuration; separate database.</summary>
+public sealed class AdminFactory : ReconcilerFactory;

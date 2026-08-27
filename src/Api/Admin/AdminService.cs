@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 using Bas.Api.Auth;
 using Bas.Api.Statements;
 using Bas.Api.Contracts.Bas;
@@ -13,7 +12,6 @@ namespace Bas.Api.Admin;
 /// <summary>Everything the admin surface can do, and the audit trail it leaves.</summary>
 public sealed class AdminService(
     BasDbContext db,
-    IPartnerKeyStore keyStore,
     IAdminActor actor,
     TimeProvider timeProvider,
     ILogger<AdminService> logger)
@@ -48,12 +46,12 @@ public sealed class AdminService(
     }
 
     /// <summary>
-    /// Registers a partner, generating their key pair unless they supplied a public key.
+    /// Registers a partner and issues their API key.
     ///
-    /// <para>When it generates, the private key is returned in the result and <b>never stored</b>.
-    /// That is the whole of the protection: it cannot be shown again, it is not in the database,
-    /// and a dump of that database cannot yield any partner's identity. The operator gets one
-    /// chance to save it, which is the same bargain AWS and GitHub make for a secret key.</para>
+    /// <para>The key comes back in the result and is <b>never stored</b> — the database keeps its
+    /// hash and a short prefix. It cannot be shown again: if it could, it would have to be stored,
+    /// and a dump of this database would authenticate as every partner at once. The operator gets
+    /// one chance to save it, the same bargain AWS and GitHub make for a secret key.</para>
     /// </summary>
     public async Task<(CreatePartnerResult? Result, BasError? Error)> CreatePartnerAsync(
         CreatePartnerRequest request, CancellationToken cancellationToken)
@@ -64,29 +62,18 @@ public sealed class AdminService(
         if (await db.Partners.AnyAsync(p => p.ClientId == request.ClientId, cancellationToken))
             return (null, Conflict($"A partner with client id '{request.ClientId}' already exists."));
 
-        string publicKeyPem;
-        string? privateKeyPem = null;
-
-        if (string.IsNullOrWhiteSpace(request.PublicKeyPem))
-        {
-            using var rsa = RSA.Create(2048);
-            publicKeyPem = rsa.ExportSubjectPublicKeyInfoPem();
-            privateKeyPem = rsa.ExportPkcs8PrivateKeyPem();
-        }
-        else
-        {
-            publicKeyPem = request.PublicKeyPem;
-        }
-
-        if (Validate(publicKeyPem, request.AllowedScopes) is { } invalid)
+        if (ValidateScopes(request.AllowedScopes) is { } invalid)
             return (null, invalid);
+
+        var issued = PartnerApiKey.Generate();
 
         var now = timeProvider.GetUtcNow();
         var partner = new Partner
         {
             ClientId = request.ClientId,
             Name = request.Name,
-            PublicKeyPem = publicKeyPem,
+            ApiKeyHash = issued.Hash,
+            ApiKeyPrefix = issued.Prefix,
             AllowedScopes = request.AllowedScopes,
             WebhookUrl = request.WebhookUrl,
             WebhookSecret = request.WebhookSecret,
@@ -97,56 +84,54 @@ public sealed class AdminService(
 
         db.Partners.Add(partner);
 
-        // Records that a key was generated and its fingerprint - never the key. An audit log is
-        // read by more people than a database is.
+        // The prefix, never the key. An audit log is read by more people than a database is.
         Audit("partner.created", partner.ClientId,
-            $"scopes [{partner.AllowedScopes}], key {Fingerprint(publicKeyPem)}" +
-            (privateKeyPem is null ? ", key supplied by partner" : ", key generated here"));
+            $"scopes [{partner.AllowedScopes}], key {issued.Prefix}…");
 
         await db.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
-            "Partner {ClientId} registered by {Actor} with key {Fingerprint}.",
-            partner.ClientId, actor.Name, Fingerprint(publicKeyPem));
+            "Partner {ClientId} registered by {Actor} with key {Prefix}…",
+            partner.ClientId, actor.Name, issued.Prefix);
 
         return (new CreatePartnerResult
         {
             Partner = ToResponse(partner, 0),
-            PrivateKeyPem = privateKeyPem
+            ApiKey = issued.Key
         }, null);
     }
 
     /// <summary>
-    /// Replaces the partner's signing key. The operation a suspected leak needs, which is why it
-    /// takes effect on the next request rather than the next deploy.
+    /// Replaces the partner's API key. The operation a suspected leak needs: the old key stops
+    /// working the moment this commits, and the new one is returned once, never stored.
     /// </summary>
-    public async Task<(AdminPartnerResponse? Partner, BasError? Error)> RotateKeyAsync(
-        string clientId, RotateKeyRequest request, CancellationToken cancellationToken)
+    public async Task<(CreatePartnerResult? Result, BasError? Error)> RotateKeyAsync(
+        string clientId, CancellationToken cancellationToken)
     {
         var partner = await db.Partners.SingleOrDefaultAsync(p => p.ClientId == clientId, cancellationToken);
         if (partner is null)
             return (null, NotFound(clientId));
 
-        if (Validate(request.PublicKeyPem, partner.AllowedScopes) is { } invalid)
-            return (null, invalid);
+        var previous = partner.ApiKeyPrefix ?? "(none)";
+        var issued = PartnerApiKey.Generate();
 
-        var previous = Fingerprint(partner.PublicKeyPem);
-
-        partner.PublicKeyPem = request.PublicKeyPem;
+        partner.ApiKeyHash = issued.Hash;
+        partner.ApiKeyPrefix = issued.Prefix;
         partner.UpdatedAt = timeProvider.GetUtcNow();
 
-        // The fingerprints, never the key itself. A public key is not a secret, but an audit log
-        // full of PEM blocks is unreadable and invites the habit of pasting key material into one.
-        Audit("partner.key_rotated", clientId,
-            $"{previous} -> {Fingerprint(partner.PublicKeyPem)}");
+        Audit("partner.key_rotated", clientId, $"{previous}… -> {issued.Prefix}…");
 
         await db.SaveChangesAsync(cancellationToken);
 
         logger.LogWarning(
-            "Partner {ClientId} signing key rotated by {Actor}. Assertions signed with the old key will " +
-            "now be refused.", clientId, actor.Name);
+            "Partner {ClientId} API key rotated by {Actor}. The previous key is refused from now.",
+            clientId, actor.Name);
 
-        return (ToResponse(partner, await WorkerCountAsync(partner.Id, cancellationToken)), null);
+        return (new CreatePartnerResult
+        {
+            Partner = ToResponse(partner, await WorkerCountAsync(partner.Id, cancellationToken)),
+            ApiKey = issued.Key
+        }, null);
     }
 
     /// <summary>
@@ -171,6 +156,64 @@ public sealed class AdminService(
             clientId, active ? "resumed" : "SUSPENDED", actor.Name, reason ?? "(none given)");
 
         return (ToResponse(partner, await WorkerCountAsync(partner.Id, cancellationToken)), null);
+    }
+
+    /// <summary>
+    /// Sets where a partner's status changes are delivered, and optionally issues a new signing
+    /// secret for them.
+    ///
+    /// <para>Changing the URL never rotates the secret on its own. If it did, correcting a typo in
+    /// the address would silently break every signature the partner verifies, and they would see
+    /// deliveries start failing with nothing to explain it.</para>
+    /// </summary>
+    public async Task<(WebhookResult? Result, BasError? Error)> SetWebhookAsync(
+        string clientId, string? url, bool newSecret, CancellationToken cancellationToken)
+    {
+        var partner = await db.Partners.SingleOrDefaultAsync(p => p.ClientId == clientId, cancellationToken);
+        if (partner is null)
+            return (null, NotFound(clientId));
+
+        url = string.IsNullOrWhiteSpace(url) ? null : url.Trim();
+
+        if (url is not null)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed) || parsed.Scheme != Uri.UriSchemeHttps)
+                return (null, new BasError(StatusCodes.Status400BadRequest, "Invalid webhook URL", "It must be an absolute https URL."));
+        }
+
+        string? issued = null;
+
+        if (url is null)
+        {
+            // Clearing the address retires the secret with it - a secret for an endpoint that no
+            // longer exists is just something else to leak.
+            partner.WebhookUrl = null;
+            partner.WebhookSecret = null;
+        }
+        else
+        {
+            partner.WebhookUrl = url;
+
+            if (newSecret || string.IsNullOrEmpty(partner.WebhookSecret))
+            {
+                issued = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+                    .Replace("+", "").Replace("/", "").Replace("=", "");
+                partner.WebhookSecret = issued;
+            }
+        }
+
+        partner.UpdatedAt = timeProvider.GetUtcNow();
+
+        Audit("partner.webhook_changed", clientId,
+            url is null ? "removed" : $"{url}{(issued is null ? "" : ", new secret issued")}");
+
+        await db.SaveChangesAsync(cancellationToken);
+
+        return (new WebhookResult
+        {
+            Partner = ToResponse(partner, await WorkerCountAsync(partner.Id, cancellationToken)),
+            Secret = issued
+        }, null);
     }
 
     // ---------------------------------------------------------------------------- lodgements
@@ -314,25 +357,8 @@ public sealed class AdminService(
     private Task<int> WorkerCountAsync(Guid partnerId, CancellationToken cancellationToken) =>
         db.PartnerUserLinks.CountAsync(l => l.PartnerId == partnerId, cancellationToken);
 
-    private BasError? Validate(string publicKeyPem, string allowedScopes)
+    private static BasError? ValidateScopes(string allowedScopes)
     {
-        var probe = new Partner
-        {
-            ClientId = "validation",
-            Name = "validation",
-            PublicKeyPem = publicKeyPem,
-            AllowedScopes = allowedScopes
-        };
-
-        // Parsed now rather than discovered at the partner's next token exchange.
-        if (keyStore.GetKey(probe) is null)
-        {
-            return new BasError(
-                StatusCodes.Status400BadRequest,
-                "Invalid public key",
-                "publicKeyPem must be a PEM-encoded RSA or ECDSA PUBLIC key. A private key is refused.");
-        }
-
         var scopes = allowedScopes.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (scopes.Length == 0)
             return new BasError(StatusCodes.Status400BadRequest, "No scopes", "allowedScopes cannot be empty.");
@@ -344,15 +370,6 @@ public sealed class AdminService(
         }
 
         return null;
-    }
-
-    /// <summary>A short, stable fingerprint of a public key — enough to tell two apart in a log.</summary>
-    internal static string Fingerprint(string publicKeyPem)
-    {
-        var normalised = new string(publicKeyPem.Where(c => !char.IsWhiteSpace(c)).ToArray());
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalised));
-
-        return Convert.ToHexString(hash)[..16].ToLowerInvariant();
     }
 
     private static BasError NotFound(string clientId) =>
@@ -367,7 +384,8 @@ public sealed class AdminService(
         Name = p.Name,
         Status = p.Status.ToString().ToLowerInvariant(),
         AllowedScopes = p.AllowedScopes,
-        PublicKeyFingerprint = Fingerprint(p.PublicKeyPem),
+        // The prefix, so an operator can tell which key a partner holds without ever seeing it.
+        ApiKeyPrefix = p.ApiKeyPrefix,
         WebhookUrl = p.WebhookUrl,
         // Whether a secret is set, never the secret.
         HasWebhookSecret = !string.IsNullOrEmpty(p.WebhookSecret),

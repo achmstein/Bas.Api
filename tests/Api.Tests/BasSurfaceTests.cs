@@ -405,24 +405,7 @@ public sealed class BasSurfaceTests(BasApiFactory factory) : IClassFixture<BasAp
     /// <summary>A client carrying a real token for a worker of its own.</summary>
     private async Task<HttpClient> AuthenticatedAsync(string subject, string? scope = null)
     {
-        var now = _factory.Clock.GetUtcNow();
-
-        var form = new Dictionary<string, string>
-        {
-            [TokenExchange.Fields.GrantType] = TokenExchange.GrantType,
-            [TokenExchange.Fields.ClientAssertionType] = TokenExchange.ClientAssertionType,
-            [TokenExchange.Fields.ClientAssertion] = _factory.Partner.CreateClientAssertion(now),
-            [TokenExchange.Fields.SubjectTokenType] = TokenExchange.SubjectTokenType,
-            [TokenExchange.Fields.SubjectToken] = _factory.Partner.CreateSubjectToken(subject, now)
-        };
-
-        if (scope is not null)
-            form[TokenExchange.Fields.Scope] = scope;
-
-        using var response = await _client.PostAsync("/api/v1/partner/token", new FormUrlEncodedContent(form));
-        response.StatusCode.ShouldBe(HttpStatusCode.OK);
-
-        var token = (await response.Content.ReadFromJsonAsync<TokenExchangeResponse>())!;
+        var token = await _factory.MintTokenAsync(_client, subject, scope);
 
         var client = _factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);

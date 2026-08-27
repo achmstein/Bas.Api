@@ -3,63 +3,24 @@
 For the engineering team at a partner platform. This is everything you need to let your users
 prepare and lodge a BAS through a registered tax agent, without ever showing them a second login.
 
-About half a day's work.
+A morning's work for one backend engineer.
 
 ---
 
-## 1. What we need from you
+## 1. What we send you
 
-Two things, neither of them secret. Email them over; there is nothing here that needs a secure
-channel.
+- Your **client id** — a short name for your platform, e.g. `mygigsters`.
+- Your **API key** — starts with `bas_`. It arrives over a channel we agree on.
 
-| | Example |
-|---|---|
-| A **client id** you'd like to use | `mygigsters` |
-| Your **public signing key**, PEM | `-----BEGIN PUBLIC KEY-----\nMIIBIjAN...` |
+Put the key in your secret manager as `BAS_PARTNER_KEY`. It stays on your servers — never in a
+browser or an app bundle — because anyone holding it can request access for **any** of your users.
+If it ever leaks, tell us: replacing it is one click on our side, and the old key stops working the
+same second.
 
-That's the whole registration. We never hold a password, an API key, or anything else you'd have to
-rotate in lockstep with us.
+We store only a hash of the key, so it cannot be recovered from us — a replacement is always a new
+key.
 
-### Your signing key
-
-We generate it and send it to you as `bas-signing.key`. Put it in your secret manager as
-`BAS_SIGNING_KEY`. It stays on your servers — never in a browser or an app bundle, because anyone
-holding it can request access for any of your users.
-
-If you would rather generate it yourself, say so and send us the public half instead:
-
-```bash
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out bas-signing.key
-openssl pkey -in bas-signing.key -pubout -out bas-signing.pub
-```
-
-### Check it works before you build
-
-Once we confirm you are registered, run the self-test that came with this guide. It exercises the
-whole flow against a made-up worker, and stops short of submitting so nothing reaches the practice.
-
-```bash
-npm install jose
-BAS_SIGNING_KEY="$(cat bas-signing.key)" node partner-selftest.mjs <your client id>
-```
-
-Every line should say PASS. If the token exchange fails, it is almost always one of three things:
-we have not registered you yet, the public key we hold does not match your private key, or your
-clock is out by more than 30 seconds.
-
-> **`bas-signing.key` must never reach a browser or a mobile bundle.** It stays on your server.
-> Anyone holding it can request a token for any of your users.
-
-EC keys work too, if your tooling prefers them:
-
-```bash
-openssl ecparam -name prime256v1 -genkey -noout -out bas-signing.key
-openssl ec -in bas-signing.key -pubout -out bas-signing.pub
-```
-
----
-
-## 2. How the flow works
+## 2. How it works
 
 ```
 Your user (already logged into your app)
@@ -67,155 +28,78 @@ Your user (already logged into your app)
    |  opens the BAS screen
    v
 YOUR SERVER  --POST /api/v1/partner/token-->  Bas.Api
-   |   client_assertion: "I am <you>"          |
-   |   subject_token:    "this is my user X"   +- verify both against your public key
-   |                                           +- resolve X to a worker, creating one if new
-   |  <---------- access token, 10 min --------+  sign with our key
+   |   header: x-partner-key                    |
+   |   body:   { "subject": "<your user id>" }  +- resolve or create the worker
+   |  <-------- access token, 10 min -----------+
    v
 Browser / Flutter  --Authorization: Bearer-->  Bas.Api
 ```
 
-Two JWTs, because they answer different questions. `client_assertion` says **which partner**;
-`subject_token` says **which of your users**. Both are signed with your key, so you can only ever
-vouch for your own users.
+Your key authenticates your platform; `subject` says which of your users the token is for. Back
+comes a **10-minute token scoped to that one user** — that is what your page holds, so the thing
+living in a browser expires in minutes while the key never leaves your server.
 
-**Ten minutes, and no refresh token.** When it expires, your component calls *your* route again —
+There is no refresh token. When the short token expires, your component calls *your* route again —
 which is guarded by *your* session. So a user logging out of your app loses access here within
 minutes, with nothing to build on either side.
 
----
+## 3. The token request
 
-## 3. The two JWTs
+`POST /api/v1/partner/token`
 
-Both are signed with your private key, using `RS256` (or `ES256` for an EC key). Set a `kid` header
-if you like; we don't require one.
-
-### `client_assertion`
-
-```jsonc
-{
-  "iss": "mygigsters",                      // your client id
-  "sub": "mygigsters",                      // must equal iss (RFC 7523 section 3)
-  "aud": "https://bas.nighttax.com.au",     // us
-  "jti": "9f2c1e...",                       // unique per call
-  "iat": 1756272000,
-  "exp": 1756272120                         // at most 5 minutes after iat
-}
-```
-
-### `subject_token`
-
-```jsonc
-{
-  "iss": "mygigsters",
-  "sub": "4471",                            // YOUR stable internal id for the user
-  "aud": "https://bas.nighttax.com.au",
-  "jti": "3a77b0...",                       // unique per call
-  "iat": 1756272000,
-  "exp": 1756272120
-}
-```
-
-### Rules that will bite you if missed
-
-- **`sub` must be a stable internal id.** Never an email address, a phone number, or anything a user
-  can change. It is the permanent key to that person's tax records — if it changes, they become a
-  different person to us and lose their history.
-- **`jti` must be fresh on every call.** We reject a repeat.
-- **`exp - iat` must be five minutes or less.**
-- **Both tokens need `iat` and `exp`.** A missing one is a rejection, not a default.
-
----
-
-## 4. The token request
-
-`POST /api/v1/partner/token`, `application/x-www-form-urlencoded`.
-
-| Field | Value |
+| | |
 |---|---|
-| `grant_type` | `urn:ietf:params:oauth:grant-type:token-exchange` |
-| `client_assertion_type` | `urn:ietf:params:oauth:client-assertion-type:jwt-bearer` |
-| `client_assertion` | the first JWT |
-| `subject_token_type` | `urn:ietf:params:oauth:token-type:jwt` |
-| `subject_token` | the second JWT |
-| `scope` | optional; omit to receive everything you were granted |
-
-Success:
+| Header | `x-partner-key: bas_...` |
+| Body | `{"subject": "4471"}` — optionally add `"scope": "bas:read"` |
 
 ```json
 {
-  "access_token": "eyJhbGciOiJSUzI1NiIs...",
-  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
-  "token_type": "Bearer",
-  "expires_in": 600,
+  "accessToken": "eyJhbGciOiJSUzI1NiIs...",
+  "tokenType": "Bearer",
+  "expiresIn": 600,
   "scope": "bas:read bas:write profile:write"
 }
 ```
 
-Failure is a standard OAuth error, `{ "error": "...", "error_description": "..." }`:
+**`subject` must be your stable internal id for the user.** Never an email, a phone number, or
+anything they can change — it is the permanent key to that person's tax records here. If it
+changes, they become a different person to us and lose their history.
+
+Errors come back as `{"error": "...", "message": "..."}`:
 
 | `error` | Status | Means |
 |---|---|---|
-| `invalid_client` | 401 | We couldn't authenticate you: unknown client id, wrong key, expired or replayed assertion, or you've been suspended. Deliberately the same answer for all of them. |
-| `invalid_grant` | 400 | The `subject_token` isn't acceptable — usually a missing `sub`. |
-| `invalid_scope` | 400 | You asked for a scope you don't hold. |
-| `invalid_request` | 400 | A field is missing or has the wrong constant. |
-| `unsupported_grant_type` | 400 | `grant_type` isn't token exchange. |
+| `invalid_key` | 401 | Wrong key, an old key after a rotation, or your registration is suspended. Deliberately the same answer for all three. |
+| `invalid_request` | 400 | Usually a missing `subject`. |
+| `invalid_scope` | 400 | You asked for a scope you do not hold. |
 
----
+## 4. Next.js
 
-## 5. Next.js
+The whole server side of the integration:
 
 ```ts
-// app/api/bas-token/route.ts  — YOUR route, guarded by YOUR session
-import { SignJWT, importPKCS8 } from 'jose'
-import { auth } from '@/lib/auth'
-
-const CLIENT_ID = 'mygigsters'
-const BAS = 'https://bas.nighttax.com.au'
-
-async function sign(subject: string) {
-  const key = await importPKCS8(process.env.BAS_SIGNING_KEY!, 'RS256')
-  return new SignJWT({})
-    .setProtectedHeader({ alg: 'RS256' })
-    .setIssuer(CLIENT_ID)
-    .setSubject(subject)
-    .setAudience(BAS)
-    .setJti(crypto.randomUUID())
-    .setIssuedAt()
-    .setExpirationTime('2m')
-    .sign(key)
-}
-
+// app/api/bas-token/route.ts  - YOUR route, guarded by YOUR session
 export async function POST() {
   const session = await auth()
   if (!session?.user) return Response.json({ error: 'unauthorised' }, { status: 401 })
 
-  // This must be your stable internal id, not their email.
-  const [clientAssertion, subjectToken] = await Promise.all([
-    sign(CLIENT_ID),
-    sign(session.user.id),
-  ])
-
-  const response = await fetch(`${BAS}/api/v1/partner/token`, {
+  const response = await fetch('https://bas.nighttax.com.au/api/v1/partner/token', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-      client_assertion: clientAssertion,
-      subject_token_type: 'urn:ietf:params:oauth:token-type:jwt',
-      subject_token: subjectToken,
-    }),
+    headers: {
+      'x-partner-key': process.env.BAS_PARTNER_KEY!,
+      'Content-Type': 'application/json',
+    },
+    // Your stable internal id, not their email.
+    body: JSON.stringify({ subject: session.user.id }),
   })
 
   if (!response.ok) {
-    console.error('bas token exchange failed', await response.text())
+    console.error('bas token failed', response.status, await response.text())
     return Response.json({ error: 'upstream' }, { status: 502 })
   }
 
-  const { access_token, expires_in } = await response.json()
-  return Response.json({ token: access_token, expiresIn: expires_in })
+  const { accessToken, expiresIn } = await response.json()
+  return Response.json({ token: accessToken, expiresIn })
 }
 ```
 
@@ -230,14 +114,11 @@ On the client, hand the component a *getter*, never a stored token:
 </BasProvider>
 ```
 
-Re-invoke `getToken()` when you're within about a minute of expiry.
+Re-invoke `getToken()` when you are within about a minute of expiry.
 
----
+## 5. Flutter
 
-## 6. Flutter
-
-Identical shape — your app calls *your* backend, which does the exchange. The signing key stays on
-your server; it never ships in the bundle.
+Identical shape — your app calls *your* backend, which holds the key and does the exchange:
 
 ```dart
 class BasTokenProvider {
@@ -264,26 +145,31 @@ class BasTokenProvider {
 }
 ```
 
----
+## 6. Check it works before you build
 
-## 7. Checking it works
-
-Once we've registered you, the smallest end-to-end test:
+Run the self-test that came with this guide. Plain Node, no dependencies. It exercises the whole
+flow for a made-up worker and stops short of submitting, so nothing reaches the practice.
 
 ```bash
-curl -s https://bas.nighttax.com.au/api/v1/workers/me \
-  -H "Authorization: Bearer $TOKEN"
+BAS_PARTNER_KEY=bas_... node partner-selftest.mjs
+```
+
+Every line should say PASS.
+
+## 7. Confirming a user resolves
+
+```bash
+curl -s https://bas.nighttax.com.au/api/v1/workers/me   -H "Authorization: Bearer $TOKEN"
 ```
 
 ```json
 { "workerId": "0198f2c1-...", "partnerId": "mygigsters" }
 ```
 
-`workerId` is ours, and it's stable for a given `sub`. Call the exchange twice for the same user and
-you'll get the same `workerId` back — that's how we know it's the same person next quarter.
+`workerId` is ours, and it is stable for a given `subject` — that is how we know it is the same
+person next quarter.
 
 ---
-
 
 ## 8. The worker's identity
 
@@ -496,20 +382,17 @@ alongside the build rather than after it.
 
 ---
 
-## 13. Rotating your key
+## 13. If your key leaks
 
-Send us the new public key. We deploy it, and from that moment assertions signed with the old key
-stop being accepted — so switch to signing with the new one only once we have confirmed.
-
-If you need a zero-gap rotation, tell us and we will register the new key alongside the old one for
-a window. Given a ten-minute token lifetime, a brief coordinated switch is usually simpler.
+Tell us. Replacing it is one click on our side; the old key stops working the same second, and we
+send you the new one. Your calls fail in between, which is the point.
 
 ## 14. Status webhooks (optional)
 
 Polling `GET /api/v1/bas/{fy}/{q}/status` works whether or not you set this up, so nothing is
 blocked on it. Webhooks just mean you find out sooner.
 
-Send us a URL and a secret of your choosing, and we will POST to it when a statement changes status.
+Send us a URL, and we will POST to it when a statement changes status. We issue the signing secret when we configure it, and send it to you with the confirmation.
 
 ### What arrives
 
