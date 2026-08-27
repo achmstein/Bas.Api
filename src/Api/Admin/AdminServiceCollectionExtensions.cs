@@ -12,7 +12,9 @@ public static class AdminServiceCollectionExtensions
     public static IHostApplicationBuilder AddAdminSurface(this IHostApplicationBuilder builder)
     {
         builder.Services.AddOptions<AdminOptions>()
-            .Bind(builder.Configuration.GetSection(AdminOptions.SectionName));
+            .Bind(builder.Configuration.GetSection(AdminOptions.SectionName))
+            .ValidateOnStart();
+        builder.Services.AddSingleton<IValidateOptions<AdminOptions>, AdminOptionsValidator>();
 
         builder.Services
             .AddIdentityCore<AdminUser>(options =>

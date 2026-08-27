@@ -200,6 +200,23 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
         row.SyncStatus.ShouldBe("Pending");
     }
 
+    [Fact]
+    public async Task Retrying_a_lodgement_returns_the_lodgement_it_retried()
+    {
+        // The response used to be fished back out of the recent-200 list, which returned a 200
+        // with a null body once the period fell outside it. A mutation answers with its row.
+        var periodId = await SubmitStatementAsync("admin-retry-response");
+
+        var response = await Admin().PostAsync($"/admin/v1/lodgements/{periodId}/retry", null);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var row = await response.Content.ReadFromJsonAsync<AdminLodgementResponse>();
+        row.ShouldNotBeNull();
+        row.PeriodId.ShouldBe(periodId);
+        row.Status.ShouldBe(BasStatuses.Submitted);
+        row.AttemptCount.ShouldBe(0);
+    }
+
     // --------------------------------------------------------------------------- webhooks
 
     [Fact]
@@ -287,10 +304,10 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
 
         using var read = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/audit");
         read.Headers.Add(AdminAuthenticationHandler.HeaderName, BasApiFactory.AdminKey);
-        var entries = await (await client.SendAsync(read)).Content
-            .ReadFromJsonAsync<List<AuditEntryResponse>>();
+        var entries = (await (await client.SendAsync(read)).Content
+            .ReadFromJsonAsync<List<AuditEntryResponse>>())!;
 
-        entries!.Select(e => e.Action).ShouldContain("partner.created");
+        entries.Select(e => e.Action).ShouldContain("partner.created");
         var suspended = entries.Single(e => e.Action == "partner.suspended");
         suspended.Subject.ShouldBe(BasApiFactory.PartnerClientId);
         suspended.Detail.ShouldBe("audited");

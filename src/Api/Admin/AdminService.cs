@@ -1,10 +1,10 @@
 using System.Security.Cryptography;
 using Bas.Api.Auth;
-using Bas.Api.Statements;
 using Bas.Api.Contracts.Bas;
 using Bas.Api.Contracts.Partner;
 using Bas.Api.Data;
 using Bas.Api.Data.Entities;
+using Bas.Api.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 namespace Bas.Api.Admin;
@@ -225,45 +225,67 @@ public sealed class AdminService(
     public async Task<IReadOnlyList<AdminLodgementResponse>> ListLodgementsAsync(
         string? status, int limit, CancellationToken cancellationToken)
     {
-        var query =
-            from period in db.BasPeriods.AsNoTracking()
-            join sync in db.SyncStates.AsNoTracking() on period.Id equals sync.BasPeriodId into syncs
-            from sync in syncs.DefaultIfEmpty()
-            join link in db.PartnerUserLinks.AsNoTracking() on period.WorkerId equals link.WorkerId into links
-            from link in links.DefaultIfEmpty()
-            join partner in db.Partners.AsNoTracking() on link.PartnerId equals partner.Id into partners
-            from partner in partners.DefaultIfEmpty()
-            select new { period, sync, partner, link };
+        var query = LodgementQuery(db.BasPeriods.AsNoTracking());
 
         if (!string.IsNullOrWhiteSpace(status)
             && Enum.TryParse<BasPeriodStatus>(status.Replace("_", ""), ignoreCase: true, out var parsed))
         {
-            query = query.Where(x => x.period.Status == parsed);
+            query = query.Where(x => x.Period.Status == parsed);
         }
 
         var rows = await query
-            .OrderByDescending(x => x.period.UpdatedAt)
+            .OrderByDescending(x => x.Period.UpdatedAt)
             .Take(Math.Clamp(limit, 1, 200))
             .ToListAsync(cancellationToken);
 
-        return rows.Select(x => new AdminLodgementResponse
-        {
-            PeriodId = x.period.Id,
-            WorkerId = x.period.WorkerId,
-            PartnerId = x.partner?.ClientId,
-            PartnerSub = x.link?.PartnerSub,
-            FinancialYear = x.period.FinancialYear,
-            Quarter = x.period.Quarter,
-            Status = BasPeriodService.ToWireStatus(x.period.Status),
-            NetAmount = x.period.NetAmount,
-            SubmittedAt = x.period.SubmittedAt,
-            UpdatedAt = x.period.UpdatedAt,
-            FailureReason = x.period.FailureReason,
-            SyncStatus = x.sync?.Status.ToString(),
-            AttemptCount = x.sync?.AttemptCount,
-            NextAttemptAt = x.sync?.NextAttemptAt,
-            LastError = x.sync?.LastError
-        }).ToList();
+        return rows.Select(ToLodgement).ToList();
+    }
+
+    /// <summary>One lodgement by its period id, in the same shape the list uses.</summary>
+    public async Task<AdminLodgementResponse?> GetLodgementAsync(Guid periodId, CancellationToken cancellationToken)
+    {
+        var row = await LodgementQuery(db.BasPeriods.AsNoTracking().Where(p => p.Id == periodId))
+            .SingleOrDefaultAsync(cancellationToken);
+
+        return row is null ? null : ToLodgement(row);
+    }
+
+    // The link join cannot fan out and skew Take: WorkerId is unique in partner_user_links.
+    private IQueryable<LodgementRow> LodgementQuery(IQueryable<BasPeriod> periods) =>
+        from period in periods
+        join sync in db.SyncStates.AsNoTracking() on period.Id equals sync.BasPeriodId into syncs
+        from sync in syncs.DefaultIfEmpty()
+        join link in db.PartnerUserLinks.AsNoTracking() on period.WorkerId equals link.WorkerId into links
+        from link in links.DefaultIfEmpty()
+        join partner in db.Partners.AsNoTracking() on link.PartnerId equals partner.Id into partners
+        from partner in partners.DefaultIfEmpty()
+        select new LodgementRow { Period = period, Sync = sync, Partner = partner, Link = link };
+
+    private static AdminLodgementResponse ToLodgement(LodgementRow x) => new()
+    {
+        PeriodId = x.Period.Id,
+        WorkerId = x.Period.WorkerId,
+        PartnerId = x.Partner?.ClientId,
+        PartnerSub = x.Link?.PartnerSub,
+        FinancialYear = x.Period.FinancialYear,
+        Quarter = x.Period.Quarter,
+        Status = x.Period.Status.ToWireStatus(),
+        NetAmount = x.Period.NetAmount,
+        SubmittedAt = x.Period.SubmittedAt,
+        UpdatedAt = x.Period.UpdatedAt,
+        FailureReason = x.Period.FailureReason,
+        SyncStatus = x.Sync?.Status.ToString(),
+        AttemptCount = x.Sync?.AttemptCount,
+        NextAttemptAt = x.Sync?.NextAttemptAt,
+        LastError = x.Sync?.LastError
+    };
+
+    private sealed class LodgementRow
+    {
+        public required BasPeriod Period { get; init; }
+        public SyncState? Sync { get; init; }
+        public Partner? Partner { get; init; }
+        public PartnerUserLink? Link { get; init; }
     }
 
     /// <summary>
@@ -294,6 +316,7 @@ public sealed class AdminService(
 
         state.Status = SyncStatus.Pending;
         state.AttemptCount = 0;
+        state.TransientAttemptCount = 0;
         state.LastError = null;
         state.NextAttemptAt = now;
         state.DirtyAt = now;
@@ -310,8 +333,9 @@ public sealed class AdminService(
         Audit("lodgement.retried", periodId.ToString(), $"FY{period.FinancialYear} Q{period.Quarter}");
         await db.SaveChangesAsync(cancellationToken);
 
-        var refreshed = await ListLodgementsAsync(null, 200, cancellationToken);
-        return (refreshed.FirstOrDefault(l => l.PeriodId == periodId), null);
+        // Looked up directly: fishing the row back out of the recent-200 list returned null for a
+        // mutation that had succeeded whenever the period fell outside it.
+        return (await GetLodgementAsync(periodId, cancellationToken), null);
     }
 
     // --------------------------------------------------------------------------------- audit

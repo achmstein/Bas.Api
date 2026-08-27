@@ -12,6 +12,14 @@
     Manager holds the real one, and no operational question needs it.
 </p>
 
+@if (_error is not null)
+{
+    <p class="text-sm text-red-600 flex items-start gap-1.5 mb-4">
+        <span class="inline-block h-1.5 w-1.5 rounded-full bg-red-500 mt-[7px] flex-shrink-0"></span>
+        <span>@_error</span>
+    </p>
+}
+
 <div class="flex items-center gap-1 mb-4 overflow-x-auto no-scrollbar">
     @foreach (var option in Filters)
     {
@@ -91,6 +99,7 @@ else
     private string? Status { get; set; }
 
     private IReadOnlyList<AdminLodgementResponse> _rows = [];
+    private string? _error;
 
     private static readonly (string Label, string? Value)[] Filters =
     [
@@ -121,7 +130,14 @@ else
 
     private async Task RetryAsync(Guid periodId)
     {
-        await Admin.RetryLodgementAsync(periodId, CancellationToken.None);
+        var (_, error) = await Admin.RetryLodgementAsync(periodId, CancellationToken.None);
+
+        if (error is not null)
+        {
+            // A silent page reload here read as "retried" when nothing had happened.
+            _error = error.Detail;
+            return;
+        }
 
         // Reload rather than mutating in place: the retry also resets the sync ledger, and showing
         // a half-updated row would be worse than a redraw.

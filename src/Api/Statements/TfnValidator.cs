@@ -54,20 +54,6 @@ public static class TfnValidator
         reason = "";
         return true;
     }
-
-    /// <summary>
-    /// All but the last three digits replaced. This is the only form a TFN should ever take in a
-    /// response, a log line or a screen - Practice Manager already holds the real one, so showing
-    /// it achieves nothing except putting it somewhere it can be screenshotted.
-    /// </summary>
-    public static string Mask(string tfn)
-    {
-        var digits = Normalise(tfn);
-
-        return digits.Length <= 3
-            ? new string('*', digits.Length)
-            : new string('*', digits.Length - 3) + digits[^3..];
-    }
 }
 
 /// <summary>Structural validation of an Australian Business Number.</summary>

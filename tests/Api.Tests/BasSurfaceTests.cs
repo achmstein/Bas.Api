@@ -26,6 +26,15 @@ public sealed class BasSurfaceTests(BasApiFactory factory) : IClassFixture<BasAp
 
     public void Dispose() => _client.Dispose();
 
+    [Fact]
+    public async Task Health_reports_the_database()
+    {
+        // /health includes the database check, so 200 here means Postgres actually answered.
+        // (The negative — Postgres down means non-200 — is a manual check; stopping the
+        // container mid-suite would poison every other test on this fixture.)
+        (await _client.GetAsync("/health")).StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
     // ------------------------------------------------------------------- worker identity
 
     [Fact]

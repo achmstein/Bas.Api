@@ -1,0 +1,10 @@
+{
+  "sdk": {
+    "version": "10.0.400",
+    "rollForward": "latestPatch"
+  },
+  "//": [
+    "Pinned because dotnet.config's test-runner workaround is specific to this SDK line, and the",
+    "CI runners resolve '10.0.x' - a minor bump should be a deliberate change, not a drive-by."
+  ]
+}

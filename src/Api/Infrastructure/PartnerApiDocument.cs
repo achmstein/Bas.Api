@@ -21,7 +21,7 @@ internal sealed class PartnerApiDocument : IOpenApiDocumentTransformer
                 "token exchange requires a bearer token obtained from " +
                 "POST /api/v1/partner/token, and each declares the scope it needs.\n\n" +
                 "The token exchange is server-to-server only: calling it from a browser would put " +
-                "the partner's signing key on a page."
+                "the partner's API key on a page."
         };
 
         document.Components ??= new OpenApiComponents();

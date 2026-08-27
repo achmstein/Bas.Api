@@ -2,6 +2,7 @@ using Bas.Api.Auth;
 using Bas.Api.Statements;
 using Bas.Api.Contracts.Bas;
 using Bas.Api.Contracts.Partner;
+using Bas.Api.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Bas.Api.Statements;
@@ -68,11 +69,4 @@ public static class WorkerEndpoints
 
         return error is not null ? error.ToResult() : Results.Ok(saved);
     }
-}
-
-/// <summary>Turns a service-level refusal into the response it describes.</summary>
-internal static class BasErrorExtensions
-{
-    public static IResult ToResult(this BasError error) =>
-        Results.Problem(title: error.Title, detail: error.Detail, statusCode: error.StatusCode);
 }

@@ -307,7 +307,8 @@ namespace Bas.Api.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("WorkerId");
+                    b.HasIndex("WorkerId")
+                        .IsUnique();
 
                     b.HasIndex("PartnerId", "PartnerSub")
                         .IsUnique();
@@ -382,6 +383,9 @@ namespace Bas.Api.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
+
+                    b.Property<int>("TransientAttemptCount")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");

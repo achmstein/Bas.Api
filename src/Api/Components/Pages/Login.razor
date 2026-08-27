@@ -65,8 +65,12 @@
 </div>
 
 @code {
+    // No property initializer: the form binder writes this property on a post, and an initializer
+    // can be overwritten with null (BL0008). ??= keeps the initial-render default instead.
     [SupplyParameterFromForm]
-    private Credentials Input { get; set; } = new();
+    private Credentials Input { get; set; } = default!;
+
+    protected override void OnInitialized() => Input ??= new();
 
     [SupplyParameterFromQuery]
     private string? ReturnUrl { get; set; }

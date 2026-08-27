@@ -60,6 +60,13 @@ public sealed class SyncState
     /// <summary>Consecutive failed attempts. Reset by a success, and by a fresh save.</summary>
     public int AttemptCount { get; set; }
 
+    /// <summary>
+    /// Consecutive outage-shaped failures. Drives backoff only — never counted against the
+    /// reconciler's attempt budget, because an outage says nothing about this statement.
+    /// Reset whenever Practice Manager answers, whatever the answer is.
+    /// </summary>
+    public int TransientAttemptCount { get; set; }
+
     /// <summary>Not before this. The whole of the backoff schedule lives in this one column.</summary>
     public DateTimeOffset NextAttemptAt { get; set; }
 

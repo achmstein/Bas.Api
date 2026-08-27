@@ -2,6 +2,7 @@ using Bas.Api.Auth;
 using Bas.Api.Statements;
 using Bas.Api.Contracts.Bas;
 using Bas.Api.Contracts.Partner;
+using Bas.Api.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Bas.Api.Statements;

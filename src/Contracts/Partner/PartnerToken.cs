@@ -85,4 +85,7 @@ public static class PartnerTokenErrors
 
     /// <summary>A requested scope is unknown or not granted to this partner. HTTP 400.</summary>
     public const string InvalidScope = "invalid_scope";
+
+    /// <summary>Too many token requests from this caller. HTTP 429; honour <c>Retry-After</c>.</summary>
+    public const string RateLimited = "rate_limited";
 }

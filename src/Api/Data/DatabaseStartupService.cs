@@ -30,7 +30,7 @@ public sealed class DatabaseStartupService(
     IServiceScopeFactory scopeFactory,
     ISigningKeyStore keyStore,
     IOptions<DatabaseOptions> databaseOptions,
-    TimeProvider timeProvider,
+    IOptions<AdminOptions> adminOptions,
     ILogger<DatabaseStartupService> logger) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -47,6 +47,15 @@ public sealed class DatabaseStartupService(
         if (!await db.Partners.AnyAsync(cancellationToken))
         {
             logger.LogInformation("No partners are registered yet. Register one from /admin/partners.");
+        }
+
+        // Loud at startup rather than at the first refused request. Not a hard failure: a
+        // console-only deployment with zero keys is legal — the surface just refuses scripts.
+        if (!adminOptions.Value.Keys.Any(k => !string.IsNullOrWhiteSpace(k.Key)))
+        {
+            logger.LogWarning(
+                "No admin API keys are configured; the /admin/v1 REST surface will refuse every " +
+                "caller. Set {Section}:Keys if scripts or runbooks need it.", AdminOptions.SectionName);
         }
 
         // Admin accounts, so a fresh deployment has someone who can sign in.

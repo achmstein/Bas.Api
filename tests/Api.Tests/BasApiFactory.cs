@@ -33,8 +33,7 @@ public class BasApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     public const string AdminKey = "a-test-admin-key-that-is-long-enough";
     public const string AdminKeyName = "test-runbook";
 
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:17-alpine")
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
         .WithDatabase("basdb")
         .WithUsername("bas")
         .WithPassword("bas")
@@ -68,8 +67,8 @@ public class BasApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             // The real migrations, applied the way a deploy applies them.
             ["Database:MigrateOnStartup"] = "true",
 
-            // No admin account: nothing here signs in through the console, and the seeded default
-            // would otherwise be created on every fixture. The named key is the admin credential.
+            // No admin account: nothing here signs in through the console. A blank email is a
+            // placeholder the seeder and validator both skip. The named key is the admin credential.
             ["Admin:Users:0:Email"] = "",
             ["Admin:Keys:0:Name"] = AdminKeyName,
             ["Admin:Keys:0:Key"] = AdminKey,

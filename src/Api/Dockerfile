@@ -41,8 +41,8 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 COPY --from=build /app/publish ./
 
-# Non-root. There is no persistent state in this container - the database holds everything, and the
-# signing key lives there encrypted - so nothing needs write access to the filesystem.
+# Non-root. There is no persistent state in this container - the database holds everything,
+# including the signing key - so nothing needs write access to the filesystem.
 USER $APP_UID
 
 ENTRYPOINT ["dotnet", "Bas.Api.dll"]

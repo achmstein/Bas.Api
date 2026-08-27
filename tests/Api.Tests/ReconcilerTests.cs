@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -5,6 +6,7 @@ using Bas.Api.Contracts.Bas;
 using Bas.Api.Contracts.Partner;
 using Bas.Api.Data;
 using Bas.Api.Data.Entities;
+using Bas.Api.Infrastructure;
 using Bas.Api.Sync;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -124,8 +126,91 @@ public sealed class ReconcilerTests(ReconcilerFactory factory) : IClassFixture<R
         var state = await LedgerAsync(periodId);
         state!.Status.ShouldBe(SyncStatus.Pending);
         state.AttemptCount.ShouldBe(0);
-        state.LastError.ShouldContain("session refused");
+        state.LastError!.ShouldContain("session refused");
         (await PeriodAsync(periodId)).Status.ShouldBe(BasPeriodStatus.Submitted);
+    }
+
+    [Fact]
+    public async Task An_unavailable_practice_manager_backs_off_progressively()
+    {
+        // A flat retry interval would hammer a downstream that is already struggling — and PM is a
+        // single browser session with a ten-minute cold start, so that matters. The outage must
+        // climb the schedule without spending the attempt budget.
+        var (_, periodId) = await SubmitAsync("recon-unavailable-backoff");
+        _factory.Gateway.Outcome = new PushOutcome.Unavailable("session refused");
+        var now = _factory.Clock.GetUtcNow();
+
+        await SweepAsync();
+        var first = await LedgerAsync(periodId);
+        first!.NextAttemptAt.ShouldBe(now + TimeSpan.FromMinutes(1));
+
+        await MakeDueAsync(periodId);
+        await SweepAsync();
+        var second = await LedgerAsync(periodId);
+        second!.NextAttemptAt.ShouldBe(now + TimeSpan.FromMinutes(5));
+
+        await MakeDueAsync(periodId);
+        await SweepAsync();
+        var third = await LedgerAsync(periodId);
+        third!.NextAttemptAt.ShouldBe(now + TimeSpan.FromMinutes(15));
+
+        // Still not a step towards being marked failed.
+        third.AttemptCount.ShouldBe(0);
+        third.Status.ShouldBe(SyncStatus.Pending);
+    }
+
+    [Fact]
+    public async Task The_first_rejection_waits_the_first_schedule_entry()
+    {
+        // The schedule's opening entry exists to make the first retry quick; indexing past it
+        // would silently turn a one-minute wait into five.
+        var (_, periodId) = await SubmitAsync("recon-first-rejection");
+        _factory.Gateway.Outcome = new PushOutcome.Rejected("PM said no");
+
+        await SweepAsync();
+
+        var state = await LedgerAsync(periodId);
+        state!.AttemptCount.ShouldBe(1);
+        state.NextAttemptAt.ShouldBe(_factory.Clock.GetUtcNow() + TimeSpan.FromMinutes(1));
+    }
+
+    [Fact]
+    public async Task An_outage_during_rejections_does_not_spend_the_budget()
+    {
+        var (_, periodId) = await SubmitAsync("recon-outage-interleaved");
+
+        // Three rejections spend three attempts.
+        _factory.Gateway.Outcome = new PushOutcome.Rejected("PM said no");
+        for (var i = 0; i < 3; i++)
+        {
+            await MakeDueAsync(periodId);
+            await SweepAsync();
+        }
+        (await LedgerAsync(periodId))!.AttemptCount.ShouldBe(3);
+
+        // An outage in the middle spends none.
+        _factory.Gateway.Outcome = new PushOutcome.Unavailable("session refused");
+        for (var i = 0; i < 3; i++)
+        {
+            await MakeDueAsync(periodId);
+            await SweepAsync();
+        }
+        var during = await LedgerAsync(periodId);
+        during!.AttemptCount.ShouldBe(3);
+        during.Status.ShouldBe(SyncStatus.Pending);
+
+        // Exhausting the default budget of 8 still takes five more genuine rejections.
+        _factory.Gateway.Outcome = new PushOutcome.Rejected("PM said no");
+        for (var i = 0; i < 4; i++)
+        {
+            await MakeDueAsync(periodId);
+            await SweepAsync();
+        }
+        (await LedgerAsync(periodId))!.Status.ShouldBe(SyncStatus.Pending);
+
+        await MakeDueAsync(periodId);
+        await SweepAsync();
+        (await LedgerAsync(periodId))!.Status.ShouldBe(SyncStatus.Failed);
     }
 
     [Fact]
@@ -153,7 +238,7 @@ public sealed class ReconcilerTests(ReconcilerFactory factory) : IClassFixture<R
 
         var period = await PeriodAsync(periodId);
         period.Status.ShouldBe(BasPeriodStatus.Failed);
-        period.FailureReason.ShouldContain("PM said no");
+        period.FailureReason!.ShouldContain("PM said no");
     }
 
     [Fact]
@@ -272,6 +357,41 @@ public sealed class ReconcilerTests(ReconcilerFactory factory) : IClassFixture<R
         worker.FamilyName = "Ellis-Smith";
 
         BasReconciler.ContentHash(period, worker).ShouldNotBe(before);
+    }
+
+    [Fact]
+    public async Task A_rejected_push_increments_the_failure_counter()
+    {
+        // The counter is what turns "the queue silently stopped" into an alert. Filtered to this
+        // host's own meter instance, because parallel test hosts publish under the same name.
+        var (_, _) = await SubmitAsync("recon-metrics");
+        _factory.Gateway.Outcome = new PushOutcome.Rejected("PM said no");
+
+        var meter = _factory.Services.GetRequiredService<BasMetrics>().Meter;
+
+        long rejected = 0;
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, l) =>
+            {
+                if (instrument.Meter == meter && instrument.Name == "bas.push.failures")
+                    l.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "outcome" && Equals(tag.Value, "rejected"))
+                    Interlocked.Add(ref rejected, measurement);
+            }
+        });
+        listener.Start();
+
+        await SweepAsync();
+
+        // At least: the sweep may also push other tests' leftover due statements.
+        Interlocked.Read(ref rejected).ShouldBeGreaterThanOrEqualTo(1);
     }
 
     // ------------------------------------------------------------------------------ helpers

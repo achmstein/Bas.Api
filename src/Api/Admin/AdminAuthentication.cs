@@ -37,6 +37,37 @@ public sealed class AdminUserSeed
     public string? DisplayName { get; set; }
 }
 
+/// <summary>
+/// A user entry with an email but no password would seed nothing and log an error nobody reads
+/// until sign-in fails. Fail the deploy instead, and name the exact variable to set.
+/// </summary>
+public sealed class AdminOptionsValidator : IValidateOptions<AdminOptions>
+{
+    public ValidateOptionsResult Validate(string? name, AdminOptions options)
+    {
+        var failures = new List<string>();
+
+        for (var i = 0; i < options.Users.Count; i++)
+        {
+            var user = options.Users[i];
+
+            // Blank-email entries are placeholders (the test host uses one to disable seeding);
+            // they are filtered out by the seeder and are not an error.
+            if (string.IsNullOrWhiteSpace(user.Email))
+                continue;
+
+            if (string.IsNullOrWhiteSpace(user.InitialPassword))
+                failures.Add(
+                    $"Admin account '{user.Email}' has no initial password. " +
+                    $"Set Admin__Users__{i}__InitialPassword in the environment.");
+        }
+
+        return failures.Count == 0
+            ? ValidateOptionsResult.Success
+            : ValidateOptionsResult.Fail(failures);
+    }
+}
+
 /// <summary>One admin credential.</summary>
 public sealed class AdminKey
 {

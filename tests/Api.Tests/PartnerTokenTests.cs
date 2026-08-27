@@ -110,6 +110,56 @@ public sealed class PartnerTokenTests(BasApiFactory factory) : IClassFixture<Bas
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
     }
 
+    [Fact]
+    public async Task An_expired_token_is_refused()
+    {
+        // The short lifetime is the whole design: it is why a token on a partner's page is safe
+        // to have there. Enforced by the custom LifetimeValidator reading the fake clock, so the
+        // test advances time instead of waiting ten minutes.
+        var token = await _factory.MintTokenAsync(_client, "worker-expiry");
+
+        using var fresh = new HttpRequestMessage(HttpMethod.Get, "/api/v1/workers/me");
+        fresh.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
+        (await _client.SendAsync(fresh)).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        // Past the lifetime plus the allowed clock skew.
+        _factory.Clock.Advance(TimeSpan.FromSeconds(token.ExpiresIn) + TimeSpan.FromSeconds(31));
+
+        using var stale = new HttpRequestMessage(HttpMethod.Get, "/api/v1/workers/me");
+        stale.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
+        (await _client.SendAsync(stale)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task A_rate_limited_token_request_carries_the_documented_error_shape()
+    {
+        // The OpenAPI document promises a PartnerTokenError on 429; a generated client
+        // deserialises exactly that, so the default status-code page is a broken contract.
+        // A bogus key gives this test its own limiter partition (the prefix) without ever
+        // minting anything.
+        var bogusKey = "bas_" + new string('z', 43);
+
+        HttpResponseMessage? limited = null;
+        for (var i = 0; i < 121; i++)
+        {
+            var response = await BasApiFactory.RequestTokenAsync(_client, "worker-limited", null, bogusKey);
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                limited = response;
+                break;
+            }
+            response.Dispose();
+        }
+
+        limited.ShouldNotBeNull("120 requests in one window is the limit; the 121st must be refused");
+        limited.Headers.CacheControl!.NoStore.ShouldBeTrue();
+        limited.Headers.RetryAfter.ShouldNotBeNull();
+
+        var body = await limited.Content.ReadFromJsonAsync<PartnerTokenError>();
+        body!.Error.ShouldBe(PartnerTokenErrors.RateLimited);
+        limited.Dispose();
+    }
+
     // ------------------------------------------------------- identity and provisioning
 
     [Fact]

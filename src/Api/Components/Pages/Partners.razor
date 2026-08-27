@@ -11,10 +11,17 @@
     </a>
 </div>
 <p class="text-sm text-zinc-500 mb-6 max-w-2xl">
-    Registered platforms. Nothing here is a secret — a client id, a public key fingerprint and a
-    scope grant. Suspending takes effect immediately; tokens already minted expire on their own
-    within minutes.
+    Registered platforms. Nothing here is a secret — a client id, a key prefix and a scope grant.
+    Suspending takes effect immediately; tokens already minted expire on their own within minutes.
 </p>
+
+@if (_error is not null)
+{
+    <p class="text-sm text-red-600 flex items-start gap-1.5 mb-4">
+        <span class="inline-block h-1.5 w-1.5 rounded-full bg-red-500 mt-[7px] flex-shrink-0"></span>
+        <span>@_error</span>
+    </p>
+}
 
 @if (_partners.Count == 0)
 {
@@ -130,13 +137,23 @@ else
         "hover:text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50 transition-colors";
 
     private IReadOnlyList<AdminPartnerResponse> _partners = [];
+    private string? _error;
 
     protected override async Task OnParametersSetAsync() =>
         _partners = await Admin.ListPartnersAsync(CancellationToken.None);
 
     private async Task SetStatusAsync(string clientId, bool active)
     {
-        await Admin.SetStatusAsync(clientId, active, reason: "Changed from the admin console.", CancellationToken.None);
+        var (_, error) = await Admin.SetStatusAsync(
+            clientId, active, reason: "Changed from the admin console.", CancellationToken.None);
+
+        if (error is not null)
+        {
+            // A silent page reload here read as "done" when nothing had happened.
+            _error = error.Detail;
+            return;
+        }
+
         Navigation.Refresh(forceReload: true);
     }
 }

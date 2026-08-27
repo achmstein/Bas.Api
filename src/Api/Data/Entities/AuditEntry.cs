@@ -26,7 +26,7 @@ public sealed class AuditEntry
 
     /// <summary>
     /// What changed, as free text. Never contains a secret or a TFN: a key rotation records that
-    /// the key changed and its fingerprint, never the key.
+    /// the key changed and its readable prefix, never the key.
     /// </summary>
     public string? Detail { get; set; }
 

@@ -1,13 +1,11 @@
 using Bas.Api.Contracts.Bas;
 using Bas.Api.Data;
 using Bas.Api.Data.Entities;
+using Bas.Api.Infrastructure;
 using Bas.Api.Webhooks;
 using Microsoft.EntityFrameworkCore;
 
 namespace Bas.Api.Statements;
-
-/// <summary>A refusal the caller can act on, carrying the HTTP status it should produce.</summary>
-public sealed record BasError(int StatusCode, string Title, string Detail);
 
 /// <summary>
 /// Everything a worker can do to their own activity statements.
@@ -114,7 +112,7 @@ public sealed class BasPeriodService(
             return (null, new BasError(
                 StatusCodes.Status409Conflict,
                 "Statement is no longer editable",
-                $"This statement is '{ToWireStatus(period.Status)}'. Figures can only be changed while " +
+                $"This statement is '{period.Status.ToWireStatus()}'. Figures can only be changed while " +
                 "it is a draft, or after a failed push."));
         }
 
@@ -205,7 +203,7 @@ public sealed class BasPeriodService(
             return (new SubmitBasResponse
             {
                 PeriodId = period.Id,
-                Status = ToWireStatus(period.Status),
+                Status = period.Status.ToWireStatus(),
                 SubmittedAt = period.SubmittedAt ?? period.UpdatedAt
             }, null);
         }
@@ -247,6 +245,7 @@ public sealed class BasPeriodService(
             state.DirtyAt = now;
             state.NextAttemptAt = now;
             state.AttemptCount = 0;
+            state.TransientAttemptCount = 0;
             state.LastError = null;
             state.UpdatedAt = now;
         }
@@ -276,7 +275,7 @@ public sealed class BasPeriodService(
 
         return (new BasStatusResponse
         {
-            Status = period is null ? BasStatuses.Draft : ToWireStatus(period.Status),
+            Status = period is null ? BasStatuses.Draft : period.Status.ToWireStatus(),
             NetAmount = period?.NetAmount,
             DueDate = calendar.DueDate,
             SubmittedAt = period?.SubmittedAt,
@@ -333,18 +332,6 @@ public sealed class BasPeriodService(
     private static BasError BadPeriod(string detail) =>
         new(StatusCodes.Status400BadRequest, "Invalid period", detail);
 
-    internal static string ToWireStatus(BasPeriodStatus status) => status switch
-    {
-        BasPeriodStatus.Draft => BasStatuses.Draft,
-        BasPeriodStatus.Submitted => BasStatuses.Submitted,
-        BasPeriodStatus.AwaitingStatement => BasStatuses.AwaitingStatement,
-        BasPeriodStatus.Pushed => BasStatuses.Pushed,
-        BasPeriodStatus.InReview => BasStatuses.InReview,
-        BasPeriodStatus.Lodged => BasStatuses.Lodged,
-        BasPeriodStatus.Failed => BasStatuses.Failed,
-        _ => BasStatuses.Draft
-    };
-
     private static BasPeriodSummary ToSummary(BasPeriod p) => new()
     {
         Id = p.Id,
@@ -353,7 +340,7 @@ public sealed class BasPeriodService(
         PeriodStart = p.PeriodStart,
         PeriodEnd = p.PeriodEnd,
         DueDate = p.DueDate,
-        Status = ToWireStatus(p.Status),
+        Status = p.Status.ToWireStatus(),
         NetAmount = p.NetAmount,
         SubmittedAt = p.SubmittedAt
     };
@@ -395,7 +382,7 @@ public sealed class BasPeriodService(
         PeriodStart = p.PeriodStart,
         PeriodEnd = p.PeriodEnd,
         DueDate = p.DueDate,
-        Status = ToWireStatus(p.Status),
+        Status = p.Status.ToWireStatus(),
         StatementType = p.StatementType,
         TotalSales = p.TotalSales,
         GstOnSales = p.GstOnSales,

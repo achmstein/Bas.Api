@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          cache: true
+          cache-dependency-path: '**/*.csproj'
+
+      # The suite runs against a real Postgres via Testcontainers, using the Docker daemon the
+      # runner already provides. That is deliberate: SQLite would skip the migrations entirely and
+      # serialise the concurrency test into a no-op.
+      # GitHub Packages needs credentials even for a public package.
+      - name: Authenticate to GitHub Packages
+        run: |
+          dotnet nuget update source GitHubPackages \
+            --username ${{ github.actor }} \
+            --password ${{ secrets.GITHUB_TOKEN }} \
+            --store-password-in-clear-text \
+            --configfile nuget.config
+
+      # `dotnet run`, not `dotnet test`. xunit v3 runs on Microsoft.Testing.Platform, the test
+      # project IS its own executable, and the .NET 10 SDK refuses to drive it through the old
+      # VSTest target. This is the native invocation and it reports failures through the exit code
+      # the same way.
+      - name: Test
+        run: dotnet run --project tests/Api.Tests/Api.Tests.csproj -c Release

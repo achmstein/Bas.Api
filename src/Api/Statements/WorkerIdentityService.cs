@@ -1,6 +1,7 @@
 using Bas.Api.Contracts.Bas;
 using Bas.Api.Data;
 using Bas.Api.Data.Entities;
+using Bas.Api.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 namespace Bas.Api.Statements;

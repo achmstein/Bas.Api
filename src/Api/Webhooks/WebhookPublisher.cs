@@ -1,8 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Bas.Api.Statements;
 using Bas.Api.Data;
 using Bas.Api.Data.Entities;
+using Bas.Api.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 namespace Bas.Api.Webhooks;
@@ -84,11 +84,10 @@ public sealed class WebhookPublisher(BasDbContext db, TimeProvider timeProvider,
             return;
 
         // The link tells us both which partner to notify and what they call this worker.
+        // Single, not First: the unique index on WorkerId guarantees at most one.
         var link = await db.PartnerUserLinks
             .AsNoTracking()
-            .Where(l => l.WorkerId == period.WorkerId)
-            .OrderBy(l => l.CreatedAt)
-            .FirstOrDefaultAsync(cancellationToken);
+            .SingleOrDefaultAsync(l => l.WorkerId == period.WorkerId, cancellationToken);
 
         if (link is null)
         {
@@ -110,8 +109,8 @@ public sealed class WebhookPublisher(BasDbContext db, TimeProvider timeProvider,
             PartnerSub = link.PartnerSub,
             FinancialYear = period.FinancialYear,
             Quarter = period.Quarter,
-            Status = BasPeriodService.ToWireStatus(period.Status),
-            PreviousStatus = BasPeriodService.ToWireStatus(previousStatus),
+            Status = period.Status.ToWireStatus(),
+            PreviousStatus = previousStatus.ToWireStatus(),
             NetAmount = period.NetAmount,
             FailureReason = period.FailureReason
         };

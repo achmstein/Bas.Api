@@ -122,6 +122,24 @@ public static class AuthenticationExtensions
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
+            // Without a writer the 429 body comes from UseStatusCodePages, which is not the
+            // PartnerTokenError shape the OpenAPI document promises a generated client.
+            options.OnRejected = async (context, cancellationToken) =>
+            {
+                var response = context.HttpContext.Response;
+                response.Headers.CacheControl = "no-store";
+                response.Headers.Pragma = "no-cache";
+
+                if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+                    response.Headers.RetryAfter = ((int)retryAfter.TotalSeconds).ToString();
+
+                await response.WriteAsJsonAsync(new PartnerTokenError
+                {
+                    Error = PartnerTokenErrors.RateLimited,
+                    Message = "Too many token requests from this caller. Try again shortly."
+                }, cancellationToken);
+            };
+
             options.AddPolicy(PartnerAuthEndpoints.TokenRateLimitPolicy, context =>
             {
                 // Signature verification is the expensive part of this endpoint and it happens

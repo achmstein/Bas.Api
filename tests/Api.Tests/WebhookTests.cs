@@ -155,13 +155,28 @@ public sealed class WebhookTests(WebhookFactory factory) : IClassFixture<Webhook
         delivery.Status.ShouldBe(WebhookDeliveryStatus.Pending);
         delivery.AttemptCount.ShouldBe(1);
         delivery.NextAttemptAt.ShouldBeGreaterThan(_factory.Clock.GetUtcNow());
-        delivery.LastError.ShouldContain("500");
+        delivery.LastError!.ShouldContain("500");
 
         _factory.Endpoint.Respond = HttpStatusCode.OK;
         await MakeDueAsync(periodId);
         await DispatchAsync();
 
         (await SingleDeliveryAsync(periodId)).Status.ShouldBe(WebhookDeliveryStatus.Delivered);
+    }
+
+    [Fact]
+    public async Task The_first_delivery_retry_waits_the_first_schedule_entry()
+    {
+        // The 30-second opening entry exists so a partner blip is retried almost immediately;
+        // indexing past it would silently turn that into two minutes.
+        var (_, periodId) = await SubmitAsync("wh-first-retry");
+        _factory.Endpoint.Respond = HttpStatusCode.InternalServerError;
+
+        await DispatchAsync();
+
+        var delivery = await SingleDeliveryAsync(periodId);
+        delivery.AttemptCount.ShouldBe(1);
+        delivery.NextAttemptAt.ShouldBe(_factory.Clock.GetUtcNow() + TimeSpan.FromSeconds(30));
     }
 
     [Fact]
@@ -211,13 +226,36 @@ public sealed class WebhookTests(WebhookFactory factory) : IClassFixture<Webhook
             .Status.ShouldBe(BasPeriodStatus.Submitted);
     }
 
+    [Fact]
+    public async Task Settled_deliveries_are_swept_after_the_retention_window()
+    {
+        // The table keeps payloads, so without retention it grows without bound. Only settled
+        // rows are swept: giving up on a pending row is the retry logic's decision, not age's.
+        _factory.Endpoint.Respond = HttpStatusCode.OK;
+        var (_, deliveredPeriod) = await SubmitAsync("wh-retention-settled");
+        await DispatchAsync();
+        (await SingleDeliveryAsync(deliveredPeriod)).Status.ShouldBe(WebhookDeliveryStatus.Delivered);
+
+        // A second delivery that will still be pending when the window passes.
+        var (_, pendingPeriod) = await SubmitAsync("wh-retention-pending");
+
+        _factory.Clock.Advance(TimeSpan.FromDays(31));
+        _factory.Endpoint.Respond = HttpStatusCode.InternalServerError;
+        await DispatchAsync();
+
+        (await DeliveriesAsync(deliveredPeriod)).ShouldBeEmpty();
+
+        var pending = await SingleDeliveryAsync(pendingPeriod);
+        pending.Status.ShouldBe(WebhookDeliveryStatus.Pending);
+    }
+
     // ------------------------------------------------------------------------------ helpers
 
     private async Task DispatchAsync()
     {
         await using var scope = _factory.CreateDbScope();
         var dispatcher = scope.ServiceProvider.GetServices<IHostedService>().OfType<WebhookDispatcher>().Single();
-        await dispatcher.DispatchAsync(CancellationToken.None);
+        await dispatcher.SweepAsync(CancellationToken.None);
     }
 
     private async Task SweepReconcilerAsync()

@@ -19,10 +19,10 @@ public sealed class Partner
 {
     public Guid Id { get; set; } = Guid.CreateVersion7();
 
-    /// <summary>The <c>iss</c>/<c>sub</c> a partner puts in its client assertion. Unique.</summary>
+    /// <summary>The identifier a partner is registered under. Unique.</summary>
     public required string ClientId { get; set; }
 
-    /// <summary>Human label for logs and the (phase 3e) admin surface.</summary>
+    /// <summary>Human label for logs and the admin surface.</summary>
     public required string Name { get; set; }
 
     /// <summary>

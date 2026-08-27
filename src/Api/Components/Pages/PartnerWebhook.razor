@@ -123,8 +123,12 @@ else
     [Parameter]
     public string ClientId { get; set; } = string.Empty;
 
+    // No property initializer: the form binder writes this property on a post, and an initializer
+    // can be overwritten with null (BL0008). ??= keeps the initial-render default instead.
     [SupplyParameterFromForm]
-    private WebhookInput Input { get; set; } = new();
+    private WebhookInput Input { get; set; } = default!;
+
+    protected override void OnInitialized() => Input ??= new();
 
     private AdminPartnerResponse? _partner;
     private string? _issuedSecret;

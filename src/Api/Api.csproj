@@ -2,8 +2,6 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>bas-api-2026</UserSecretsId>
     <!-- Project directory is Api (src/ layout, mirroring PracticeManager.Api); the assembly and
          namespaces carry the fully-qualified name, which is also the container entrypoint. -->
@@ -19,34 +17,32 @@
     <ProjectReference Include="..\ServiceDefaults\ServiceDefaults.csproj" />
   </ItemGroup>
 
+  <!-- Versions live in Directory.Packages.props, including the rationale comments for the
+       EntityFrameworkCore.Relational pin and the PracticeManager.Api.Contracts float. -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <!-- Keeps the Data Protection key ring in Postgres. Without it the keys live inside the
          container, so every redeploy invalidates every antiforgery token and every auth cookie. -->
-    <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.11" />
-    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.11" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />
-    <!-- Explicit, though Npgsql already pulls it: Npgsql asks for an older Relational, and the only
-         thing raising it to 10.0.11 was EntityFrameworkCore.Design - which is PrivateAssets=all and
-         so does not flow to referencing projects. That left the test project binding this assembly
-         at 10.0.4 while Api.dll had been compiled against 10.0.11. -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.11" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11">
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <!-- Pinned to the version Microsoft.AspNetCore.Authentication.JwtBearer 10.0.11 resolves, so
-         token creation here and token validation in the middleware share one IdentityModel. -->
-    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.19.2" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <!-- /health checks the database; without it the endpoint reported healthy with Postgres down,
+         and the container healthcheck plus Caddy were watching an answer that meant nothing. -->
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <!-- Renders the OpenAPI document as browsable reference docs at /docs, with a request builder.
          What a partner's engineer opens before they write anything. -->
-    <PackageReference Include="Scalar.AspNetCore" Version="2.17.1" />
-    <!-- The gRPC contract for the Practice Manager push, from GitHub Packages. Floated because the
-         publishing repository tags every build; the wire shape is what matters, not the build id. -->
-    <PackageReference Include="PracticeManager.Api.Contracts" Version="1.0.0-*" />
-    <PackageReference Include="Grpc.Net.ClientFactory" Version="2.76.0" />
+    <PackageReference Include="Scalar.AspNetCore" />
+    <!-- The gRPC contract for the Practice Manager push, from GitHub Packages. -->
+    <PackageReference Include="PracticeManager.Api.Contracts" />
+    <PackageReference Include="Grpc.Net.ClientFactory" />
   </ItemGroup>
 
   <ItemGroup>

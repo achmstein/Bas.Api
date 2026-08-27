@@ -1,8 +1,10 @@
+using System.ComponentModel.DataAnnotations;
 using System.Security.Cryptography;
 using System.Text;
 using Bas.Api.Statements;
 using Bas.Api.Data;
 using Bas.Api.Data.Entities;
+using Bas.Api.Infrastructure;
 using Bas.Api.Webhooks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -20,6 +22,7 @@ public sealed class ReconcilerOptions
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>How many statements to take per sweep. Pushed one at a time regardless.</summary>
+    [Range(1, 1000)]
     public int BatchSize { get; set; } = 20;
 
     /// <summary>
@@ -36,6 +39,7 @@ public sealed class ReconcilerOptions
     ];
 
     /// <summary>Attempts before a statement is given up on and marked failed for a human.</summary>
+    [Range(1, 100)]
     public int MaxAttempts { get; set; } = 8;
 
     /// <summary>
@@ -56,52 +60,34 @@ public sealed class ReconcilerOptions
 public sealed class BasReconciler(
     IServiceScopeFactory scopeFactory,
     IOptions<ReconcilerOptions> options,
+    BasMetrics metrics,
     TimeProvider timeProvider,
-    ILogger<BasReconciler> logger) : BackgroundService
+    ILogger<BasReconciler> logger) : SweepingBackgroundService(timeProvider, logger)
 {
     private readonly ReconcilerOptions _options = options.Value;
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override bool Enabled => _options.Enabled;
+
+    protected override TimeSpan PollInterval => _options.PollInterval;
+
+    protected override string DisabledMessage => "no statements will be pushed.";
+
+    public override async Task SweepAsync(CancellationToken cancellationToken)
     {
-        if (!_options.Enabled)
-        {
-            logger.LogInformation("Reconciler is disabled; no statements will be pushed.");
-            return;
-        }
-
-        logger.LogInformation(
-            "Reconciler started; polling every {Interval}.", _options.PollInterval);
-
-        using var timer = new PeriodicTimer(_options.PollInterval, timeProvider);
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await SweepAsync(stoppingToken);
-
-                if (!await timer.WaitForNextTickAsync(stoppingToken))
-                    return;
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                // A sweep that throws must not take the host down - the next tick tries again.
-                logger.LogError(ex, "Reconciler sweep failed; retrying at the next interval.");
-            }
-        }
-    }
-
-    /// <summary>One pass over the due work. Public so a test can drive it without a timer.</summary>
-    public async Task SweepAsync(CancellationToken cancellationToken)
-    {
-        var now = timeProvider.GetUtcNow();
+        var now = TimeProvider.GetUtcNow();
 
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<BasDbContext>();
+
+        // One aggregate per sweep keeps the queue gauges honest without the observable callbacks
+        // ever touching the database.
+        var queue = await db.SyncStates
+            .Where(s => s.Status == SyncStatus.Pending)
+            .GroupBy(_ => 1)
+            .Select(g => new { Count = g.Count(), Oldest = g.Min(s => s.NextAttemptAt) })
+            .SingleOrDefaultAsync(cancellationToken);
+
+        metrics.RecordSyncQueue(queue?.Count ?? 0, queue is null ? TimeSpan.Zero : now - queue.Oldest);
 
         var due = await db.SyncStates
             .Where(s => s.NextAttemptAt <= now
@@ -114,7 +100,7 @@ public sealed class BasReconciler(
         if (due.Count == 0)
             return;
 
-        logger.LogInformation("Reconciler found {Count} statement(s) due.", due.Count);
+        Logger.LogInformation("Reconciler found {Count} statement(s) due.", due.Count);
 
         foreach (var periodId in due)
         {
@@ -164,7 +150,7 @@ public sealed class BasReconciler(
         if (state.Status is SyncStatus.Synced && state.ContentHash == hash)
             return;
 
-        var now = timeProvider.GetUtcNow();
+        var now = TimeProvider.GetUtcNow();
         var previousStatus = period.Status;
         var outcome = await gateway.PushAsync(period, worker, tfn, cancellationToken);
 
@@ -174,6 +160,7 @@ public sealed class BasReconciler(
                 state.Status = SyncStatus.Synced;
                 state.ContentHash = hash;
                 state.AttemptCount = 0;
+                state.TransientAttemptCount = 0;
                 state.LastError = null;
                 state.LastSyncedAt = now;
                 state.NextAttemptAt = now;
@@ -195,7 +182,7 @@ public sealed class BasReconciler(
                         // write and discarded them, so the figures are gone and nobody would know.
                         // Not a failure - the rest of the statement is fine and the agent will see
                         // it - but it must not be silent.
-                        logger.LogWarning(
+                        Logger.LogWarning(
                             "Statement {PeriodId} (FY{Year} Q{Quarter}) carried figures for [{Sections}], which " +
                             "the statement the ATO issued does not include. Practice Manager discarded them.",
                             period.Id, period.FinancialYear, period.Quarter,
@@ -203,7 +190,7 @@ public sealed class BasReconciler(
                     }
                 }
 
-                logger.LogInformation(
+                Logger.LogInformation(
                     "Pushed statement {PeriodId} (FY{Year} Q{Quarter}) to Practice Manager as client {ClientId}, " +
                     "statement {StatementId} (type {Type}); sections [{Sections}]; label 9 {Net}.",
                     period.Id, period.FinancialYear, period.Quarter,
@@ -215,6 +202,7 @@ public sealed class BasReconciler(
                 // Not a failure, so the attempt budget is untouched. The ATO issues shortly after
                 // the period ends; until then there is genuinely nothing to write to.
                 state.Status = SyncStatus.AwaitingStatement;
+                state.TransientAttemptCount = 0;
                 state.LastError = null;
                 state.NextAttemptAt = now + _options.AwaitingStatementInterval;
                 state.UpdatedAt = now;
@@ -222,26 +210,32 @@ public sealed class BasReconciler(
                 period.Status = BasPeriodStatus.AwaitingStatement;
                 period.UpdatedAt = now;
 
-                logger.LogInformation(
+                Logger.LogInformation(
                     "Statement {PeriodId} (FY{Year} Q{Quarter}) has not been issued by the ATO yet; " +
                     "re-checking in {Interval}.",
                     period.Id, period.FinancialYear, period.Quarter, _options.AwaitingStatementInterval);
                 break;
 
             case PushOutcome.Unavailable unavailable:
-                // Practice Manager cannot act right now. Back off, but do not spend the attempt
-                // budget on an outage that says nothing about this statement.
+                // Practice Manager cannot act right now. Back off progressively, but do not spend
+                // the attempt budget on an outage that says nothing about this statement.
+                metrics.PushUnavailable();
+                state.TransientAttemptCount++;
                 state.LastError = unavailable.Reason;
-                state.NextAttemptAt = now + Backoff(state.AttemptCount);
+                state.NextAttemptAt =
+                    now + RetrySchedule.Backoff(_options.RetrySchedule, state.TransientAttemptCount);
                 state.UpdatedAt = now;
 
-                logger.LogWarning(
+                Logger.LogWarning(
                     "Practice Manager unavailable for statement {PeriodId}: {Reason}. Retrying at {Next:o}.",
                     period.Id, unavailable.Reason, state.NextAttemptAt);
                 break;
 
             case PushOutcome.Rejected rejected:
+                // Practice Manager answered, so any outage is over - only the rejection counts.
+                metrics.PushRejected();
                 state.AttemptCount++;
+                state.TransientAttemptCount = 0;
                 state.LastError = rejected.Reason;
                 state.UpdatedAt = now;
 
@@ -251,9 +245,9 @@ public sealed class BasReconciler(
                     return;
                 }
 
-                state.NextAttemptAt = now + Backoff(state.AttemptCount);
+                state.NextAttemptAt = now + RetrySchedule.Backoff(_options.RetrySchedule, state.AttemptCount);
 
-                logger.LogWarning(
+                Logger.LogWarning(
                     "Push rejected for statement {PeriodId} (attempt {Attempt}/{Max}): {Reason}. Retrying at {Next:o}.",
                     period.Id, state.AttemptCount, _options.MaxAttempts, rejected.Reason, state.NextAttemptAt);
                 break;
@@ -272,8 +266,10 @@ public sealed class BasReconciler(
         string reason,
         CancellationToken cancellationToken)
     {
-        var now = timeProvider.GetUtcNow();
+        var now = TimeProvider.GetUtcNow();
         var previousStatus = period.Status;
+
+        metrics.PushFailed();
 
         state.Status = SyncStatus.Failed;
         state.LastError = reason;
@@ -283,22 +279,13 @@ public sealed class BasReconciler(
         period.FailureReason = reason;
         period.UpdatedAt = now;
 
-        logger.LogError(
+        Logger.LogError(
             "Giving up on statement {PeriodId} (FY{Year} Q{Quarter}) after {Attempts} attempt(s): {Reason}",
             period.Id, period.FinancialYear, period.Quarter, state.AttemptCount, reason);
 
         await webhooks.EnqueueStatusChangeAsync(period, previousStatus, cancellationToken);
 
         await db.SaveChangesAsync(cancellationToken);
-    }
-
-    private TimeSpan Backoff(int attemptCount)
-    {
-        var schedule = _options.RetrySchedule;
-        if (schedule.Length == 0)
-            return TimeSpan.FromMinutes(5);
-
-        return schedule[Math.Min(Math.Max(attemptCount, 0), schedule.Length - 1)];
     }
 
     /// <summary>

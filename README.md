@@ -225,13 +225,16 @@ the unique index arbitrating concurrent provisioning is actually exercised rathe
 into a no-op.
 
 The service's clock is `TimeProvider` throughout, including inside JWT lifetime validation, so
-expiry and replay are tested without waiting.
+token expiry, retry backoff and webhook retention are tested by advancing a fake clock rather
+than waiting.
 
 ## Deploying
 
-`.github/workflows/deploy.yml` (manual dispatch) runs the tests, publishes the contracts package,
-builds the image, generates the compose file with `aspire publish`, and ships it to the same
-Lightsail box as `PracticeManager.Api`, behind the same Caddy.
+`.github/workflows/ci.yml` runs the test suite on every push to `main` and every pull request, so
+nothing lands unguarded. `.github/workflows/deploy.yml` (manual dispatch) runs the tests again,
+publishes the contracts package, builds the image, generates the compose file with
+`aspire publish`, and ships it to the same Lightsail box as `PracticeManager.Api`, behind the same
+Caddy.
 
 ### Deploy PracticeManager.Api first
 
@@ -247,27 +250,36 @@ deploying it early breaks nothing that works today.
 ### First deploy
 
 1. Set the repository secrets: `POSTGRES_PASSWORD`, `DEPLOY_SSH_KEY`, `PRACTICEMANAGER_API_KEY`
-   (the same value as `PracticeManager.Api`'s `SECURITY_API_KEY`) and `ADMIN_API_KEY` for scripts
-   (`openssl rand -base64 32`).
+   (the same value as `PracticeManager.Api`'s `SECURITY_API_KEY`), `ADMIN_API_KEY` for scripts
+   (`openssl rand -base64 32`), and `ADMIN_INITIAL_PASSWORD` for the first admin account.
 
-2. Set the repository variables: `SERVER_HOST`, `SERVER_USER`, `BAS_REMOTE_DIR`.
+2. Set the repository variables: `SERVER_HOST`, `SERVER_USER`, `BAS_REMOTE_DIR`, and `ADMIN_EMAIL`
+   (the first admin account's sign-in email).
 
-3. The admin account is seeded from `appsettings.json` — `david@nighttax.com.au` /
-   `Administrator1!`, the same default as the other tools. **Change the password after the first
-   sign-in.** Seeding is create-only, so it never overwrites what you change.
+3. The admin account is created on first boot from `ADMIN_EMAIL` / `ADMIN_INITIAL_PASSWORD` —
+   nothing is committed to the repository. **Change the password after the first sign-in.**
+   Seeding is create-only, so it never overwrites what you change.
 
 4. Point `bas.nighttax.com.au` at the box. Caddy picks it up from the compose labels.
 
 5. Register the partner from the console, or `POST /admin/v1/partners` with the `x-admin-key`
-   header. Configuration seeding still works for a first partner, but it is bootstrap-only: once a
-   partner exists the API is authoritative, and a config file that differs is reported at startup
-   rather than applied.
+   header.
 
 6. Confirm the service is up:
 
    ```bash
    curl -s https://bas.nighttax.com.au/health
    ```
+
+### Operational invariants
+
+**Exactly one replica of the API container.** Both background workers — the reconciler pushing
+statements into Practice Manager and the webhook dispatcher — select due rows with a plain query.
+There is no lease column and no `FOR UPDATE SKIP LOCKED`, so a second replica would pick up the
+same rows and push the same statement into the live practice twice. `MigrateOnStartup` likewise
+assumes a single migrator. This is the right trade for a single-box deployment; if scaling out is
+ever actually needed, both workers need row leases (`FOR UPDATE SKIP LOCKED`), migrations need to
+move to a one-shot job, and only then may `deploy.replicas` exceed 1.
 
 ### Back up Postgres
 

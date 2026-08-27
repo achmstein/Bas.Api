@@ -109,8 +109,12 @@ else
         "px-2.5 py-1.5 text-xs font-medium rounded-md border border-zinc-200 text-zinc-600 " +
         "hover:text-zinc-900 hover:border-zinc-300 hover:bg-zinc-50 transition-colors";
 
+    // No property initializer: the form binder writes this property on a post, and an initializer
+    // can be overwritten with null (BL0008). ??= keeps the initial-render default instead.
     [SupplyParameterFromForm]
-    private PartnerInput Input { get; set; } = new();
+    private PartnerInput Input { get; set; } = default!;
+
+    protected override void OnInitialized() => Input ??= new();
 
     private CreatePartnerResult? _result;
     private string? _error;

@@ -41,13 +41,6 @@ public sealed class TfnValidatorTests
         reason.ShouldNotContain("123");
     }
 
-    [Theory]
-    [InlineData("123456782", "******782")]
-    [InlineData("12", "**")]
-    public void Masks_everything_but_the_last_three_digits(string tfn, string expected)
-    {
-        TfnValidator.Mask(tfn).ShouldBe(expected);
-    }
 }
 
 public sealed class AbnValidatorTests

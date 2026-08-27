@@ -41,17 +41,11 @@ public static class PartnerAuthEndpoints
 
         // A token is a credential, so nothing on the way may cache this response.
         if (outcome.Token is not null)
-            return JsonWithHeaders.Create(outcome.Token, StatusCodes.Status200OK, NoStore);
+            return JsonWithHeaders.Create(outcome.Token, StatusCodes.Status200OK, JsonWithHeaders.NoStore);
 
         return JsonWithHeaders.Create(
             new PartnerTokenError { Error = outcome.Error!, Message = outcome.Message },
             outcome.StatusCode,
-            NoStore);
+            JsonWithHeaders.NoStore);
     }
-
-    private static readonly (string Name, string Value)[] NoStore =
-    [
-        ("Cache-Control", "no-store"),
-        ("Pragma", "no-cache")
-    ];
 }

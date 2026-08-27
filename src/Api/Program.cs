@@ -7,7 +7,7 @@ using Bas.Api.Infrastructure;
 using Bas.Api.Sync;
 using Bas.Api.Webhooks;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
+using OpenTelemetry.Metrics;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -33,6 +33,10 @@ builder.Services.AddDbContext<BasDbContext>((serviceProvider, options) =>
 builder.Services.AddOptions<DatabaseOptions>()
     .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName));
 
+// Deliberately NOT tagged "live": /alive stays a pure liveness probe, while /health — the endpoint
+// the container healthcheck and the AppHost watch — now actually fails when Postgres is down.
+builder.Services.AddHealthChecks().AddDbContextCheck<BasDbContext>("database");
+
 // The Data Protection key ring, in Postgres. It protects antiforgery tokens and the admin auth
 // cookie, and the default on-disk location is inside a container with no volume - so every deploy
 // invalidated both. A fixed application name keeps the ring stable across image rebuilds.
@@ -48,39 +52,13 @@ builder.AddAdminSurface();
 builder.Services.AddRazorComponents();
 builder.Services.AddCascadingAuthenticationState();
 
-builder.Services.AddScoped<WorkerIdentityService>();
-builder.Services.AddScoped<BasPeriodService>();
+builder.AddStatements();
+builder.AddSync();
+builder.AddWebhooks();
 
-// The push into Practice Manager, and the ledger that owns retrying it.
-builder.Services.AddOptions<PracticeManagerOptions>()
-    .Bind(builder.Configuration.GetSection(PracticeManagerOptions.SectionName))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
-builder.Services.AddOptions<ReconcilerOptions>()
-    .Bind(builder.Configuration.GetSection(ReconcilerOptions.SectionName));
-
-builder.Services
-    .AddGrpcClient<PracticeManager.Api.Contracts.PracticeManagerApi.PracticeManagerApiClient>((sp, o) =>
-        o.Address = new Uri(sp.GetRequiredService<IOptions<PracticeManagerOptions>>().Value.Endpoint));
-
-builder.Services.AddScoped<IPracticeManagerGateway, PracticeManagerGateway>();
-builder.Services.AddHostedService<BasReconciler>();
-
-// Outbound status webhooks. Optional for a partner - polling the status route works whether or not
-// they register a URL - so nothing here is on the critical path of a lodgement.
-builder.Services.AddOptions<WebhookOptions>()
-    .Bind(builder.Configuration.GetSection(WebhookOptions.SectionName));
-
-builder.Services.AddHttpClient(WebhookDispatcher.HttpClientName)
-    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-    {
-        // A redirect would deliver a signed payload to an address the partner did not register.
-        AllowAutoRedirect = false
-    });
-
-builder.Services.AddScoped<WebhookPublisher>();
-builder.Services.AddHostedService<WebhookDispatcher>();
+// The pipeline's own instruments (queue depth, push failures, abandoned webhooks). Registered
+// here rather than in ServiceDefaults so that project stays generic template plumbing.
+builder.Services.ConfigureOpenTelemetryMeterProvider(metrics => metrics.AddMeter(BasMetrics.MeterName));
 
 builder.Services.AddHostedService<DatabaseStartupService>();
 

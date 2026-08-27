@@ -1,0 +1,65 @@
+<Project>
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- For the PracticeManager.Api.Contracts float below; CPM refuses floats without this. -->
+    <CentralPackageFloatingVersionsEnabled>true</CentralPackageFloatingVersionsEnabled>
+  </PropertyGroup>
+
+  <!-- One declaration site per package. Three Microsoft version families coexist deliberately -
+       10.0.x (runtime-aligned), 10.1.x (Resilience/ServiceDiscovery), 10.9.x (TimeProvider.Testing)
+       are different release trains; CPM's job here is one place to look, not artificial
+       unification to a number none of them ship. -->
+  <ItemGroup>
+    <!-- Aspire (the Aspire.AppHost.Sdk element stays in AppHost.csproj - SDKs are not packages). -->
+    <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.2.4" />
+    <PackageVersion Include="Aspire.Hosting.Docker" Version="13.2.4" />
+    <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.2.4" />
+
+    <!-- ASP.NET / EF, runtime-aligned. -->
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11" />
+    <!-- Kept explicit although Npgsql already pulls Relational: Npgsql asks for an older Relational,
+         and the only thing raising it to 10.0.11 was EntityFrameworkCore.Design - which is
+         PrivateAssets=all and so does not flow to referencing projects. Without the explicit pin the
+         test project bound this assembly at 10.0.4 while Api.dll had been compiled against 10.0.11. -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.1.0" />
+    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.1.0" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.9.0" />
+    <!-- Pinned to the version Microsoft.AspNetCore.Authentication.JwtBearer 10.0.11 resolves, so
+         token creation and token validation in the middleware share one IdentityModel. -->
+    <PackageVersion Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.19.2" />
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+
+    <!-- OpenTelemetry. 1.18.0 clears the NU1902 advisories against the 1.14 line. -->
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.18.0" />
+
+    <!-- Aspire 13.2.4 pulls MessagePack 2.5.192, which carries known advisories (one high).
+         Referenced directly from the AppHost to raise it to the patched 2.5 line. -->
+    <PackageVersion Include="MessagePack" Version="2.5.302" />
+
+    <!-- The gRPC contract for the Practice Manager push, from GitHub Packages. Floated because the
+         publishing repository tags every build; the wire shape is what matters, not the build id. -->
+    <PackageVersion Include="PracticeManager.Api.Contracts" Version="1.0.0-*" />
+    <PackageVersion Include="Grpc.Net.ClientFactory" Version="2.76.0" />
+
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.17.1" />
+
+    <!-- Tests. -->
+    <PackageVersion Include="Shouldly" Version="4.3.0" />
+    <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
+    <PackageVersion Include="xunit.v3" Version="4.0.0" />
+  </ItemGroup>
+
+</Project>

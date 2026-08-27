@@ -178,6 +178,11 @@ public sealed class BasDbContext(DbContextOptions<BasDbContext> options)
             // the same subject loses here rather than creating a second worker.
             entity.HasIndex(e => new { e.PartnerId, e.PartnerSub }).IsUnique();
 
+            // And the other direction: one partner link per worker. WorkerProvisioner only ever
+            // creates 1:1; this turns the assumption the webhook publisher and the admin lodgement
+            // join already rely on into a constraint rather than a convention.
+            entity.HasIndex(e => e.WorkerId).IsUnique();
+
             entity.HasOne(e => e.Partner)
                   .WithMany(p => p.UserLinks)
                   .HasForeignKey(e => e.PartnerId)

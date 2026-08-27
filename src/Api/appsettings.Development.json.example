@@ -1,24 +1,15 @@
 {
   "//": [
     "Copy to appsettings.Development.json (git-ignored) for local work.",
-    "The key below is the sample partner key from docs/partner-integration.md - development only."
+    "Partners are registered through the admin console at /admin/partners (or",
+    "POST /admin/v1/partners), which issues their API key - nothing partner-related",
+    "is configured in files."
   ],
   "ConnectionStrings": {
     "basdb": "Host=localhost;Port=5432;Database=basdb;Username=postgres;Password=postgres"
   },
   "PartnerAuth": {
     "Issuer": "http://localhost:5280"
-  },
-  "Partners": {
-    "Registrations": [
-      {
-        "ClientId": "mygigsters-dev",
-        "Name": "MyGigsters (local)",
-        "PublicKeyPem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkq...replace me...\n-----END PUBLIC KEY-----",
-        "AllowedScopes": "bas:read bas:write profile:write",
-        "Active": true
-      }
-    ]
   },
   "Cors": {
     "AllowedOrigins": [ "http://localhost:3000" ]

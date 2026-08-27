@@ -28,6 +28,13 @@ public sealed class JsonWithHeaders<T>(T value, int statusCode, (string Name, st
 /// <summary>Factory for <see cref="JsonWithHeaders{T}"/>, so call sites read as one expression.</summary>
 public static class JsonWithHeaders
 {
+    /// <summary>For any response carrying a credential: nothing on the way may cache it.</summary>
+    public static readonly (string Name, string Value)[] NoStore =
+    [
+        ("Cache-Control", "no-store"),
+        ("Pragma", "no-cache")
+    ];
+
     public static IResult Create<T>(T value, int statusCode, (string Name, string Value)[] headers) =>
         new JsonWithHeaders<T>(value, statusCode, headers);
 }

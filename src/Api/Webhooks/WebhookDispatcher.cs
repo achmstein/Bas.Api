@@ -1,8 +1,10 @@
+using System.ComponentModel.DataAnnotations;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Bas.Api.Data;
 using Bas.Api.Data.Entities;
+using Bas.Api.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -17,6 +19,7 @@ public sealed class WebhookOptions
 
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(15);
 
+    [Range(1, 1000)]
     public int BatchSize { get; set; } = 50;
 
     /// <summary>Per-request timeout. Short: a partner's endpoint should acknowledge, not process.</summary>
@@ -37,6 +40,7 @@ public sealed class WebhookOptions
     ];
 
     /// <summary>Attempts before giving up. The partner can still poll for the status.</summary>
+    [Range(1, 100)]
     public int MaxAttempts { get; set; } = 10;
 
     /// <summary>How long a delivered or failed row is kept before it is swept away.</summary>
@@ -59,8 +63,9 @@ public sealed class WebhookDispatcher(
     IServiceScopeFactory scopeFactory,
     IHttpClientFactory httpClientFactory,
     IOptions<WebhookOptions> options,
+    BasMetrics metrics,
     TimeProvider timeProvider,
-    ILogger<WebhookDispatcher> logger) : BackgroundService
+    ILogger<WebhookDispatcher> logger) : SweepingBackgroundService(timeProvider, logger)
 {
     /// <summary>Name of the outbound <see cref="HttpClient"/>.</summary>
     public const string HttpClientName = "partner-webhook";
@@ -70,40 +75,18 @@ public sealed class WebhookDispatcher(
 
     private readonly WebhookOptions _options = options.Value;
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    /// <summary>Last time settled rows were swept away. Retention runs at most hourly.</summary>
+    private DateTimeOffset _lastRetentionSweep = DateTimeOffset.MinValue;
+
+    protected override bool Enabled => _options.Enabled;
+
+    protected override TimeSpan PollInterval => _options.PollInterval;
+
+    protected override string DisabledMessage => "partners will have to poll.";
+
+    public override async Task SweepAsync(CancellationToken cancellationToken)
     {
-        if (!_options.Enabled)
-        {
-            logger.LogInformation("Webhook dispatch is disabled; partners will have to poll.");
-            return;
-        }
-
-        using var timer = new PeriodicTimer(_options.PollInterval, timeProvider);
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await DispatchAsync(stoppingToken);
-
-                if (!await timer.WaitForNextTickAsync(stoppingToken))
-                    return;
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Webhook dispatch sweep failed; retrying at the next interval.");
-            }
-        }
-    }
-
-    /// <summary>One pass over the due deliveries. Public so a test can drive it without a timer.</summary>
-    public async Task DispatchAsync(CancellationToken cancellationToken)
-    {
-        var now = timeProvider.GetUtcNow();
+        var now = TimeProvider.GetUtcNow();
 
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<BasDbContext>();
@@ -125,11 +108,35 @@ public sealed class WebhookDispatcher(
 
         if (due.Count > 0)
             await db.SaveChangesAsync(cancellationToken);
+
+        await SweepRetentionAsync(db, now, cancellationToken);
+    }
+
+    /// <summary>
+    /// Deletes settled rows — delivered or given up — older than the retention window, so the
+    /// table (payloads included) does not grow without bound. Set-based; payloads never load.
+    /// Pending rows are exempt regardless of age: giving up is <see cref="Retry"/>'s decision.
+    /// </summary>
+    private async Task SweepRetentionAsync(BasDbContext db, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (now - _lastRetentionSweep < TimeSpan.FromHours(1))
+            return;
+
+        _lastRetentionSweep = now;
+        var cutoff = now - _options.Retention;
+
+        var removed = await db.WebhookDeliveries
+            .Where(d => d.Status != WebhookDeliveryStatus.Pending && d.CreatedAt < cutoff)
+            .ExecuteDeleteAsync(cancellationToken);
+
+        if (removed > 0)
+            Logger.LogInformation("Swept {Count} settled webhook deliveries older than {Retention}.",
+                removed, _options.Retention);
     }
 
     private async Task AttemptAsync(BasDbContext db, WebhookDelivery delivery, CancellationToken cancellationToken)
     {
-        var now = timeProvider.GetUtcNow();
+        var now = TimeProvider.GetUtcNow();
         var partner = delivery.Partner;
 
         if (partner is null || string.IsNullOrWhiteSpace(partner.WebhookUrl))
@@ -163,7 +170,7 @@ public sealed class WebhookDispatcher(
                 delivery.DeliveredAt = now;
                 delivery.LastError = null;
 
-                logger.LogInformation(
+                Logger.LogInformation(
                     "Delivered {Event} {DeliveryId} to partner {ClientId}.",
                     delivery.EventType, delivery.Id, partner.ClientId);
                 return;
@@ -193,23 +200,21 @@ public sealed class WebhookDispatcher(
 
         if (giveUpNow || delivery.AttemptCount >= _options.MaxAttempts)
         {
+            metrics.WebhookAbandoned();
             delivery.Status = WebhookDeliveryStatus.Failed;
 
             // Warning rather than error: the partner can still poll, so a statement is never stuck
             // because a webhook did not arrive.
-            logger.LogWarning(
+            Logger.LogWarning(
                 "Giving up on {Event} {DeliveryId} to partner {ClientId} after {Attempts} attempt(s): {Reason}. " +
                 "They can still poll for the status.",
                 delivery.EventType, delivery.Id, clientId, delivery.AttemptCount, reason);
             return;
         }
 
-        var schedule = _options.RetrySchedule;
-        delivery.NextAttemptAt = now + (schedule.Length == 0
-            ? TimeSpan.FromMinutes(5)
-            : schedule[Math.Min(delivery.AttemptCount, schedule.Length - 1)]);
+        delivery.NextAttemptAt = now + RetrySchedule.Backoff(_options.RetrySchedule, delivery.AttemptCount);
 
-        logger.LogWarning(
+        Logger.LogWarning(
             "Delivery of {Event} {DeliveryId} to partner {ClientId} failed ({Reason}); retrying at {Next:o}.",
             delivery.EventType, delivery.Id, clientId, reason, delivery.NextAttemptAt);
     }
@@ -220,7 +225,7 @@ public sealed class WebhookDispatcher(
     /// <para>The timestamp is inside the signed material on purpose: without it a captured request
     /// could be replayed at any point in the future and still verify.</para>
     /// </summary>
-    internal static string Sign(string payload, string secret, DateTimeOffset now)
+    internal static string Sign(string payload, string? secret, DateTimeOffset now)
     {
         var timestamp = now.ToUnixTimeSeconds();
         var signed = $"{timestamp}.{payload}";
