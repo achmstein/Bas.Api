@@ -29,6 +29,12 @@ var practiceManagerEndpoint = builder.AddParameter(
     "practicemanager-endpoint", value: "http://practicemanager-api:8081");
 var practiceManagerApiKey = builder.AddParameter("practicemanager-api-key", secret: true, value: "");
 
+// The first admin account, and a key for scripts. Both are bootstrap: the account is created only
+// if it does not exist, so changing the password here later does nothing - sign in and change it.
+var adminEmail = builder.AddParameter("admin-email", value: "");
+var adminPassword = builder.AddParameter("admin-password", secret: true, value: "");
+var adminApiKey = builder.AddParameter("admin-api-key", secret: true, value: "");
+
 var postgres = builder.AddPostgres("bas-postgres")
     // Aspire generates a password per publish otherwise, which would be a new password — and so a
     // locked-out database — on every deploy.
@@ -44,6 +50,11 @@ builder.AddProject<Projects.Api>("bas-api")
     .WithEnvironment("Security__DataEncryptionKey", dataEncryptionKey)
     .WithEnvironment("PracticeManager__Endpoint", practiceManagerEndpoint)
     .WithEnvironment("PracticeManager__ApiKey", practiceManagerApiKey)
+    .WithEnvironment("Admin__Users__0__Email", adminEmail)
+    .WithEnvironment("Admin__Users__0__InitialPassword", adminPassword)
+    .WithEnvironment("Admin__Users__0__DisplayName", "Administrator")
+    .WithEnvironment("Admin__Keys__0__Name", "deploy-runbook")
+    .WithEnvironment("Admin__Keys__0__Key", adminApiKey)
     // REST only — unlike PracticeManager.Api there is no native gRPC listener to keep off the
     // HTTP/1.1 endpoint, so one cleartext port behind Caddy is the whole story.
     .WithEnvironment("Kestrel__Endpoints__http__Url", "http://*:8080")

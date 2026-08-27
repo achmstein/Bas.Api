@@ -280,16 +280,24 @@ deploying it early breaks nothing that works today.
    undecryptable, and every token in flight invalid.
 
 2. Set the remaining repository secrets: `POSTGRES_PASSWORD`, `DEPLOY_SSH_KEY`,
-   `PRACTICEMANAGER_API_KEY` (the same value as `PracticeManager.Api`'s `SECURITY_API_KEY`).
+   `PRACTICEMANAGER_API_KEY` (the same value as `PracticeManager.Api`'s `SECURITY_API_KEY`),
+   `ADMIN_PASSWORD` (the first admin account's initial password) and `ADMIN_API_KEY`
+   (for scripts — `openssl rand -base64 32` again).
 
-3. Set the repository variables: `SERVER_HOST`, `SERVER_USER`, `BAS_REMOTE_DIR`.
+3. Set the repository variables: `SERVER_HOST`, `SERVER_USER`, `BAS_REMOTE_DIR`, `ADMIN_EMAIL`.
 
 4. Point `bas.nighttax.com.au` at the box. Caddy picks it up from the compose labels.
 
-5. Register the partner. Until the admin API lands (3e) that means adding their public key to
-   configuration and redeploying — see *Registering a partner*.
+5. Sign in at `https://bas.nighttax.com.au/admin` with `ADMIN_EMAIL` and `ADMIN_PASSWORD`, and
+   **change the password immediately** — it has been sitting in CI. The seeder never updates an
+   existing account, so changing `ADMIN_PASSWORD` afterwards does nothing.
 
-6. Confirm the service is up and that a partner can authenticate:
+6. Register the partner from the console, or `POST /admin/v1/partners` with the `x-admin-key`
+   header. Configuration seeding still works for a first partner, but it is bootstrap-only: once a
+   partner exists the API is authoritative, and a config file that differs is reported at startup
+   rather than applied.
+
+7. Confirm the service is up:
 
    ```bash
    curl -s https://bas.nighttax.com.au/health

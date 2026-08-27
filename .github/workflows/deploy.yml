@@ -124,6 +124,9 @@ jobs:
           DATA_ENCRYPTION_KEY=${{ secrets.DATA_ENCRYPTION_KEY }}
           PRACTICEMANAGER_ENDPOINT=${{ vars.PRACTICEMANAGER_ENDPOINT || 'http://practicemanager-api:8081' }}
           PRACTICEMANAGER_API_KEY=${{ secrets.PRACTICEMANAGER_API_KEY }}
+          ADMIN_EMAIL=${{ vars.ADMIN_EMAIL }}
+          ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }}
+          ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}
           EOF
 
       - uses: actions/upload-artifact@v4
