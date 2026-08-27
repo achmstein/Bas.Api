@@ -12,7 +12,14 @@ ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 
 # Restore against csproj files only, so a source-only change doesn't re-download packages.
+# The Directory.*.props files must travel with them: every package version lives in
+# Directory.Packages.props (Central Package Management), so a restore without it sees versionless
+# PackageReferences and fails with NU1015. global.json deliberately stays out - the FROM tag
+# already pins the SDK, and a feature-band mismatch between the two would fail this build for
+# nothing.
 COPY nuget.config                               .
+COPY Directory.Build.props                      .
+COPY Directory.Packages.props                   .
 COPY src/Contracts/Contracts.csproj             Contracts/
 COPY src/ServiceDefaults/ServiceDefaults.csproj ServiceDefaults/
 COPY src/Api/Api.csproj                         Api/
