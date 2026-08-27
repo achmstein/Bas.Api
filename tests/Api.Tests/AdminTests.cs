@@ -378,6 +378,16 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
     }
 
     [Fact]
+    public async Task Console_pages_carry_a_browser_title()
+    {
+        // Static SSR renders <PageTitle> into the HeadOutlet server-side; without one the tab
+        // shows a bare URL, which is what an operator juggling several consoles navigates by.
+        var html = await _client.GetStringAsync("/admin/login");
+
+        html.ShouldContain("<title>Sign in · BAS admin</title>");
+    }
+
+    [Fact]
     public async Task The_sign_in_form_posts_the_way_a_browser_posts_it()
     {
         // Submits EVERY hidden field the page rendered, duplicates included, because that is what a

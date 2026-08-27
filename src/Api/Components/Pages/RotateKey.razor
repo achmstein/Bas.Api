@@ -2,6 +2,8 @@
 @attribute [Authorize(Policy = AdminEndpoints.UiPolicyName)]
 @inject AdminService Admin
 
+<PageTitle>Rotate key · BAS admin</PageTitle>
+
 <a href="/admin/partners" class="text-sm text-zinc-500 hover:text-zinc-900">&larr; Partners</a>
 
 @if (_partner is null && _result is null)

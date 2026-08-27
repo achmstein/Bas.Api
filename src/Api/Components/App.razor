@@ -9,6 +9,9 @@
     <base href="/" />
     <link rel="icon" href="data:," />
     <HeadOutlet />
+    @* Fallback only. A page's <PageTitle> renders into the HeadOutlet above, and a browser uses
+       the first <title> in document order - so this one wins only when no page set its own. *@
+    <title>BAS admin</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

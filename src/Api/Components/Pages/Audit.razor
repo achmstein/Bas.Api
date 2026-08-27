@@ -2,6 +2,8 @@
 @attribute [Authorize(Policy = AdminEndpoints.UiPolicyName)]
 @inject AdminService Admin
 
+<PageTitle>Audit · BAS admin</PageTitle>
+
 <div class="flex items-baseline justify-between gap-4 flex-wrap mb-1">
     <h1 class="text-lg font-semibold tracking-tight text-zinc-900">Audit</h1>
     <span class="text-xxs font-mono text-zinc-400 tabular-nums">@_entries.Count entries</span>
