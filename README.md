@@ -320,9 +320,9 @@ as the database.
 
 ## What is not here yet
 
-Nothing further is planned. Per-request partner audit (stamping `partner_id` and `jti` on every
-partner-facing request, rather than only on the mint) is the one thing from the original 3e list
-that is not built — the mint is logged, but individual API calls are not.
+Nothing further is planned from the original build order. Every partner request now carries
+`partner_id`, `worker_id` and `jti` on its logging scope, so a line from inside a request traces
+back to the token that authorised it and the mint that issued it.
 
 **The read-back is not wired up here yet.** `PracticeManager.Api` now reads the statement back
 inside the push and reports `netAmount`, the issued `statementType`, and the `has*` section flags on

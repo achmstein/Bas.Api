@@ -118,6 +118,11 @@ app.UseStatusCodePages();
 app.UseCors();
 app.UseRateLimiter();
 app.UseAuthentication();
+
+// After authentication, so there is a principal to read; before authorization, so a 403 is stamped
+// with the partner it was refused for.
+app.UsePartnerRequestAudit();
+
 app.UseAuthorization();
 app.UseAntiforgery();
 
