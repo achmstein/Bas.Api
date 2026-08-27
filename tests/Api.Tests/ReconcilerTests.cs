@@ -217,6 +217,51 @@ public sealed class ReconcilerTests(ReconcilerFactory factory) : IClassFixture<R
     }
 
     [Fact]
+    public async Task A_successful_push_records_what_Practice_Manager_computed()
+    {
+        // Never calculated here: if our arithmetic and the ATO's disagree, ours is the wrong one.
+        var (_, periodId) = await SubmitAsync("recon-readback");
+        _factory.Gateway.Outcome = new PushOutcome.Pushed(
+            1, 2, ["Gst"], new StatementReadback("C", 2900, 870, 2030, []));
+
+        await SweepAsync();
+
+        var period = await PeriodAsync(periodId);
+        period.NetAmount.ShouldBe(2030);
+
+        // The type the ATO issued, learned rather than guessed.
+        period.StatementType.ShouldBe("C");
+    }
+
+    [Fact]
+    public async Task A_push_still_succeeds_when_the_statement_cannot_be_read_back()
+    {
+        // The figures landed. Not knowing the net amount is a lesser outcome, not a failure.
+        var (_, periodId) = await SubmitAsync("recon-noreadback");
+        _factory.Gateway.Outcome = new PushOutcome.Pushed(1, 2, ["Gst"], Readback: null);
+
+        await SweepAsync();
+
+        var period = await PeriodAsync(periodId);
+        period.Status.ShouldBe(BasPeriodStatus.Pushed);
+        period.NetAmount.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Figures_sent_for_a_section_the_statement_lacks_are_still_pushed_but_reported()
+    {
+        // Practice Manager accepts the write and discards them, so the figures are gone. The
+        // statement is otherwise fine and the agent will see it - but it must not be silent.
+        var (_, periodId) = await SubmitAsync("recon-missing-section");
+        _factory.Gateway.Outcome = new PushOutcome.Pushed(
+            1, 2, ["Gst"], new StatementReadback("C", 2900, 870, 2030, ["PAYG instalment"]));
+
+        await SweepAsync();
+
+        (await PeriodAsync(periodId)).Status.ShouldBe(BasPeriodStatus.Pushed);
+    }
+
+    [Fact]
     public async Task The_content_hash_covers_identity_as_well_as_figures()
     {
         // Correcting a misspelled surname has to reach the practice too, not just new numbers.

@@ -31,7 +31,15 @@ public abstract record PushOutcome
     private PushOutcome() { }
 
     /// <summary>Written into Practice Manager and waiting for the agent.</summary>
-    public sealed record Pushed(int ClientId, int StatementId, IReadOnlyList<string> SectionsPushed) : PushOutcome;
+    /// <param name="Readback">
+    /// What Practice Manager said about the statement after the write. Null when it could not be
+    /// read back — the figures still landed, so this is a lesser outcome rather than a failure.
+    /// </param>
+    public sealed record Pushed(
+        int ClientId,
+        int StatementId,
+        IReadOnlyList<string> SectionsPushed,
+        StatementReadback? Readback = null) : PushOutcome;
 
     /// <summary>
     /// Practice Manager was reachable, but the ATO has not issued a statement for this period yet.
@@ -48,6 +56,26 @@ public abstract record PushOutcome
     /// <summary>The push was rejected on its merits. Retrying the same content will not help much.</summary>
     public sealed record Rejected(string Reason) : PushOutcome;
 }
+
+/// <summary>
+/// What Practice Manager reports about a statement once it has been written.
+///
+/// <para>None of it is calculated here. The type is the one the ATO issued, and the totals are
+/// Practice Manager's own — if our arithmetic and the ATO's ever disagree, ours is the one that is
+/// wrong.</para>
+/// </summary>
+/// <param name="StatementType">The ATO's letter, which the push deliberately declined to guess.</param>
+/// <param name="NetAmount">Label 9: what is owed or refunded.</param>
+/// <param name="SectionsMissing">
+/// Sections figures were sent for that this statement does not carry. Practice Manager accepts
+/// those writes and discards them, so without this they vanish silently.
+/// </param>
+public sealed record StatementReadback(
+    string? StatementType,
+    int? TotalGstOnSales,
+    int? TotalGstOnPurchases,
+    int? NetAmount,
+    IReadOnlyList<string> SectionsMissing);
 
 /// <summary>Pushes a statement into Practice Manager.</summary>
 public interface IPracticeManagerGateway
@@ -96,7 +124,10 @@ public sealed class PracticeManagerGateway(
                 return new PushOutcome.AwaitingStatement(response.ClientId);
 
             return new PushOutcome.Pushed(
-                response.ClientId, response.TaxReturnId, response.SectionsPushed.ToList());
+                response.ClientId,
+                response.TaxReturnId,
+                response.SectionsPushed.ToList(),
+                ReadBack(request.Snapshot, response));
         }
         catch (RpcException ex) when (ex.StatusCode is StatusCode.FailedPrecondition)
         {
@@ -118,6 +149,37 @@ public sealed class PracticeManagerGateway(
         {
             return new PushOutcome.Rejected($"{ex.StatusCode}: {ex.Status.Detail}");
         }
+    }
+
+    /// <summary>
+    /// Interprets the read-back, including which sections the statement turned out not to carry.
+    /// </summary>
+    private static StatementReadback ReadBack(
+        ActivityStatementSnapshot snapshot, SyncActivityStatementResponse response)
+    {
+        var missing = new List<string>();
+
+        void Check(bool sent, bool? carried, string section)
+        {
+            if (sent && carried is false)
+                missing.Add(section);
+        }
+
+        Check(snapshot.TotalSales is not null || snapshot.GstOnSales is not null
+              || snapshot.GstOnPurchases is not null, response.HasGst, "GST");
+
+        Check(snapshot.InstalmentIncome is not null || snapshot.AtoInstalmentAmount is not null
+              || snapshot.VariedInstalmentAmount is not null, response.HasPaygInstalments, "PAYG instalment");
+
+        Check(snapshot.TotalSalaryWages is not null || snapshot.AmountWithheld is not null,
+            response.HasPaygWithholding, "PAYG withholding");
+
+        return new StatementReadback(
+            response.StatementType,
+            response.TotalGstOnSales,
+            response.TotalGstOnPurchases,
+            response.NetAmount,
+            missing);
     }
 
     private static ActivityStatementSnapshot BuildSnapshot(BasPeriod period, Worker worker, string tfn)

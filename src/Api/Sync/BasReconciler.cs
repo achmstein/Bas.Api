@@ -183,11 +183,33 @@ public sealed class BasReconciler(
                 period.Status = BasPeriodStatus.Pushed;
                 period.UpdatedAt = now;
 
+                // Practice Manager's own figures, taken as read. The statement type is the one the
+                // ATO issued - the push declined to guess it, and this is where we find out.
+                if (pushed.Readback is { } readback)
+                {
+                    period.NetAmount = readback.NetAmount;
+                    period.StatementType = readback.StatementType ?? period.StatementType;
+
+                    if (readback.SectionsMissing.Count > 0)
+                    {
+                        // The worker filled in labels their statement does not have. PM accepted the
+                        // write and discarded them, so the figures are gone and nobody would know.
+                        // Not a failure - the rest of the statement is fine and the agent will see
+                        // it - but it must not be silent.
+                        logger.LogWarning(
+                            "Statement {PeriodId} (FY{Year} Q{Quarter}) carried figures for [{Sections}], which " +
+                            "the statement the ATO issued does not include. Practice Manager discarded them.",
+                            period.Id, period.FinancialYear, period.Quarter,
+                            string.Join(", ", readback.SectionsMissing));
+                    }
+                }
+
                 logger.LogInformation(
                     "Pushed statement {PeriodId} (FY{Year} Q{Quarter}) to Practice Manager as client {ClientId}, " +
-                    "statement {StatementId}; sections [{Sections}].",
+                    "statement {StatementId} (type {Type}); sections [{Sections}]; label 9 {Net}.",
                     period.Id, period.FinancialYear, period.Quarter,
-                    pushed.ClientId, pushed.StatementId, string.Join(", ", pushed.SectionsPushed));
+                    pushed.ClientId, pushed.StatementId, pushed.Readback?.StatementType ?? "unknown",
+                    string.Join(", ", pushed.SectionsPushed), pushed.Readback?.NetAmount);
                 break;
 
             case PushOutcome.AwaitingStatement:
