@@ -20,6 +20,17 @@ public static class BasStatuses
     /// <summary>Lodged with the ATO.</summary>
     public const string Lodged = "lodged";
 
+    /// <summary>
+    /// Submitted, but the ATO has not yet issued the statement for this period — or Practice
+    /// Manager has not yet retrieved it.
+    ///
+    /// <para>Not an error, and not something the worker can act on. The ATO issues an activity
+    /// statement shortly after the period ends, and the type it chooses is the only authority on
+    /// what statement this taxpayer has. Waiting is correct; creating one on a guessed type would
+    /// put a wrong statement into the live practice.</para>
+    /// </summary>
+    public const string AwaitingStatement = "awaiting_statement";
+
     /// <summary>Something went wrong on the way to the practice. Carries a reason.</summary>
     public const string Failed = "failed";
 }
@@ -105,12 +116,6 @@ public sealed record WorkerIdentityResponse
 /// </summary>
 public sealed record SaveBasRequest
 {
-    /// <summary>
-    /// The ATO's statement type letter — <c>C</c> is the quarterly BAS a GST-registered sole
-    /// trader receives. Defaults to <c>C</c> when omitted.
-    /// </summary>
-    public string? StatementType { get; init; }
-
     // ----- GST. Under Simpler BAS - mandatory below $10m turnover, so every gig worker - only
     // G1, 1A and 1B are lodged.
 
@@ -186,6 +191,11 @@ public sealed record BasPeriodResponse
     /// <summary>One of <see cref="BasStatuses"/>.</summary>
     public required string Status { get; init; }
 
+    /// <summary>
+    /// The ATO's statement type letter, <b>read back from the statement the ATO issued</b> — never
+    /// supplied by the partner and never guessed here. Null until the statement has been found in
+    /// Practice Manager.
+    /// </summary>
     public string? StatementType { get; init; }
 
     public int? TotalSales { get; init; }

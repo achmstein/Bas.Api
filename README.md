@@ -214,16 +214,31 @@ Postgres runs as a compose service with a named volume. It holds worker identity
 | 3d | Status webhook + net-amount read-back |
 | 3e | Partner admin API (register, rotate, suspend) + per-request audit |
 
-A submitted statement currently stops at `submitted`. `pushed`, `in_review`, `lodged` and `failed`
-are modelled and documented but nothing sets them yet.
+A submitted statement currently stops at `submitted`. `awaiting_statement`, `pushed`, `in_review`,
+`lodged` and `failed` are modelled and documented but nothing sets them yet.
 
 Two questions from the plan are still open, and both gate 3c:
 
-**Who picks the statement type.** The ATO issues the statement and chooses its type; PM stores it as
-`typeVariationCode`. Today the partner sends it, so a partner sending `C` when the ATO issued `G`
-would have us create the wrong statement. It should be read back from prefill instead — making the
-create step "find the statement the ATO issued" rather than "make one". This is the weakest seam in
-3b and it is deliberately marked as such in `BasPeriod.StatementType`.
+**Who picks the statement type — settled in principle, needs 3c to implement.** The ATO issues the
+statement and chooses its type from obligations we cannot see, so nobody upstream of the ATO may
+assert one. `statementType` has been removed from the partner request accordingly; it is now
+read-only, filled in by the reconciler from the statement that actually exists.
+
+What 3c has to do is **find, never create**. That needs one new RPC on `PracticeManager.Api`:
+
+```
+FindActivityStatement(clientId, periodStart, periodEnd)
+  -> statementId, typeVariationCode,
+     hasGST, hasPAYGI, hasPAYGW, hasFTC, hasWET, hasLCT, isG1NonEditable, ...
+```
+
+The `has*` flags come free with it and close a second gap: 3b accepts T and W figures without
+knowing whether the worker's statement carries those sections at all. With the flags, a mismatch is
+caught instead of being written into a label that does not exist.
+
+If no statement is found, the period goes to `awaiting_statement` and the reconciler retries on a
+slow cadence — the ATO issues shortly after period end, and waiting is correct. Creating one on a
+guessed type would put a wrong statement into the live practice that someone then has to delete.
 
 **Who captures the declaration.** Lodging a BAS is a legal act by the taxpayer. Either the partner
 captures it and we rely on them contractually, or the agent's own declaration covers it.

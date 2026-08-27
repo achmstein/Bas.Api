@@ -348,7 +348,6 @@ special-case "they have not started yet".
 ```jsonc
 // PUT /api/v1/bas/2027/1 - the whole payload, Simpler BAS
 {
-  "statementType": "C",
   "totalSales": 31900,        // G1, GST inclusive
   "gstOnSales": 2900,         // 1A
   "gstOnPurchases": 870,      // 1B
@@ -415,7 +414,7 @@ safe to retry.
 ```
 
 ```
-draft -> submitted -> pushed -> in_review -> lodged
+draft -> submitted -> awaiting_statement -> pushed -> in_review -> lodged
                  \-> failed  (carries failureReason; correct it and re-submit)
 ```
 
@@ -423,10 +422,16 @@ draft -> submitted -> pushed -> in_review -> lodged
 |---|---|
 | `draft` | Being filled in |
 | `submitted` | Queued for the practice |
+| `awaiting_statement` | The ATO has not issued the statement for this period yet. Not an error, and nothing the worker can do — show it as "waiting on the ATO", not as a problem. |
 | `pushed` | In Practice Manager, waiting for the agent |
 | `in_review` | The agent has it open |
 | `lodged` | Lodged with the ATO |
 | `failed` | Did not reach the practice; `failureReason` says why |
+
+There is deliberately no `statementType` in the request. The ATO issues the activity statement and
+chooses its type from obligations neither of us can see, so nobody upstream of the ATO gets to
+assert one — we read it back from the statement the ATO actually issued and return it to you. Until
+then it is `null`.
 
 **`netAmount` is label 9 as Practice Manager computed it**, not as we did — it is `null` until the
 statement has been pushed and read back. We deliberately do not calculate it locally: if our

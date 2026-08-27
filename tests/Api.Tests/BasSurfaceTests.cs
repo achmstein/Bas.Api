@@ -157,8 +157,11 @@ public sealed class BasSurfaceTests(BasApiFactory factory) : IClassFixture<BasAp
         saved.TotalSales.ShouldBe(31900);
         saved.GstOnSales.ShouldBe(2900);
         saved.GstOnPurchases.ShouldBe(870);
-        saved.StatementType.ShouldBe("C");
         saved.Status.ShouldBe(BasStatuses.Draft);
+
+        // The ATO issues the statement and chooses its type. Nothing upstream of the ATO gets to
+        // assert one, so this stays null until the reconciler finds the real statement.
+        saved.StatementType.ShouldBeNull();
 
         // Net amount is Practice Manager's to compute, so it stays null until the push reads it back.
         saved.NetAmount.ShouldBeNull();
@@ -392,7 +395,6 @@ public sealed class BasSurfaceTests(BasApiFactory factory) : IClassFixture<BasAp
 
     private static SaveBasRequest SimplerBas() => new()
     {
-        StatementType = "C",
         TotalSales = 31900,
         GstOnSales = 2900,
         GstOnPurchases = 870,

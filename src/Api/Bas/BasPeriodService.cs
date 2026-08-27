@@ -275,23 +275,13 @@ public sealed class BasPeriodService(BasDbContext db, TimeProvider timeProvider)
                 "T9 (varied instalment amount) requires T4 (variationReasonCode).");
         }
 
-        if (request.StatementType is { Length: > 0 } type && (type.Length > 2 || !type.All(char.IsLetter)))
-        {
-            return new BasError(
-                StatusCodes.Status400BadRequest,
-                "Invalid statement type",
-                "statementType is the ATO's statement letter, for example 'C'.");
-        }
-
         return null;
     }
 
     private static void Apply(SaveBasRequest request, BasPeriod period)
     {
-        period.StatementType = string.IsNullOrWhiteSpace(request.StatementType)
-            ? period.StatementType ?? "C"
-            : request.StatementType.ToUpperInvariant();
-
+        // StatementType is deliberately not touched here. It is filled in by the reconciler from the
+        // statement the ATO actually issued - see BasPeriod.StatementType.
         period.TotalSales = request.TotalSales;
         period.GstOnSales = request.GstOnSales;
         period.GstOnPurchases = request.GstOnPurchases;
@@ -314,6 +304,7 @@ public sealed class BasPeriodService(BasDbContext db, TimeProvider timeProvider)
     {
         BasPeriodStatus.Draft => BasStatuses.Draft,
         BasPeriodStatus.Submitted => BasStatuses.Submitted,
+        BasPeriodStatus.AwaitingStatement => BasStatuses.AwaitingStatement,
         BasPeriodStatus.Pushed => BasStatuses.Pushed,
         BasPeriodStatus.InReview => BasStatuses.InReview,
         BasPeriodStatus.Lodged => BasStatuses.Lodged,
