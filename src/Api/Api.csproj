@@ -36,6 +36,10 @@
          token creation here and token validation in the middleware share one IdentityModel. -->
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.19.2" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <!-- The gRPC contract for the Practice Manager push, from GitHub Packages. Floated because the
+         publishing repository tags every build; the wire shape is what matters, not the build id. -->
+    <PackageReference Include="PracticeManager.Api.Contracts" Version="1.0.0-*" />
+    <PackageReference Include="Grpc.Net.ClientFactory" Version="2.76.0" />
   </ItemGroup>
 
   <ItemGroup>

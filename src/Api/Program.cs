@@ -4,7 +4,9 @@ using Bas.Api.Data;
 using Bas.Api.Endpoints;
 using Bas.Api.Infrastructure;
 using Bas.Api.Security;
+using Bas.Api.Sync;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -41,6 +43,22 @@ builder.AddPartnerAuthentication();
 
 builder.Services.AddScoped<WorkerIdentityService>();
 builder.Services.AddScoped<BasPeriodService>();
+
+// The push into Practice Manager, and the ledger that owns retrying it.
+builder.Services.AddOptions<PracticeManagerOptions>()
+    .Bind(builder.Configuration.GetSection(PracticeManagerOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddOptions<ReconcilerOptions>()
+    .Bind(builder.Configuration.GetSection(ReconcilerOptions.SectionName));
+
+builder.Services
+    .AddGrpcClient<PracticeManager.Api.Contracts.PracticeManagerApi.PracticeManagerApiClient>((sp, o) =>
+        o.Address = new Uri(sp.GetRequiredService<IOptions<PracticeManagerOptions>>().Value.Endpoint));
+
+builder.Services.AddScoped<IPracticeManagerGateway, PracticeManagerGateway>();
+builder.Services.AddHostedService<BasReconciler>();
 
 builder.Services.AddHostedService<DatabaseStartupService>();
 

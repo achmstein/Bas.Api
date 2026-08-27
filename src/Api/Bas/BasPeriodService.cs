@@ -222,6 +222,32 @@ public sealed class BasPeriodService(BasDbContext db, TimeProvider timeProvider)
         period.FailureReason = null;
         period.UpdatedAt = now;
 
+        // Enqueue for the practice. The ledger is what the reconciler sweeps; submitting is the
+        // only thing that puts work on it, and a re-submit resets the attempt budget so a
+        // corrected statement is not still serving a penalty from the version before it.
+        var state = await db.SyncStates.SingleOrDefaultAsync(s => s.BasPeriodId == period.Id, cancellationToken);
+        if (state is null)
+        {
+            db.SyncStates.Add(new SyncState
+            {
+                BasPeriodId = period.Id,
+                Status = SyncStatus.Pending,
+                DirtyAt = now,
+                NextAttemptAt = now,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
+        else
+        {
+            state.Status = SyncStatus.Pending;
+            state.DirtyAt = now;
+            state.NextAttemptAt = now;
+            state.AttemptCount = 0;
+            state.LastError = null;
+            state.UpdatedAt = now;
+        }
+
         await db.SaveChangesAsync(cancellationToken);
 
         return (new SubmitBasResponse

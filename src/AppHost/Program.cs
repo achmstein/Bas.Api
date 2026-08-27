@@ -22,6 +22,13 @@ builder.AddDockerComposeEnvironment("bas")
 // it must outlive any single container.
 var dataEncryptionKey = builder.AddParameter("data-encryption-key", secret: true);
 
+// PracticeManager.Api runs in its own compose stack on the same box, reachable over the shared
+// `caddy` network. Native gRPC lives on its 8081 listener - 8080 is HTTP/1.1 only, because Kestrel
+// cannot multiplex h2c and HTTP/1.1 on one cleartext endpoint.
+var practiceManagerEndpoint = builder.AddParameter(
+    "practicemanager-endpoint", value: "http://practicemanager-api:8081");
+var practiceManagerApiKey = builder.AddParameter("practicemanager-api-key", secret: true, value: "");
+
 var postgres = builder.AddPostgres("bas-postgres")
     // Aspire generates a password per publish otherwise, which would be a new password — and so a
     // locked-out database — on every deploy.
@@ -35,6 +42,8 @@ builder.AddProject<Projects.Api>("bas-api")
     .WithReference(database)
     .WaitFor(database)
     .WithEnvironment("Security__DataEncryptionKey", dataEncryptionKey)
+    .WithEnvironment("PracticeManager__Endpoint", practiceManagerEndpoint)
+    .WithEnvironment("PracticeManager__ApiKey", practiceManagerApiKey)
     // REST only — unlike PracticeManager.Api there is no native gRPC listener to keep off the
     // HTTP/1.1 endpoint, so one cleartext port behind Caddy is the whole story.
     .WithEnvironment("Kestrel__Endpoints__http__Url", "http://*:8080")

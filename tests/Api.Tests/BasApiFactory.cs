@@ -20,7 +20,7 @@ namespace Bas.Api.Tests;
 /// here exactly as a deploy applies them, and writes genuinely run in parallel, so the unique index
 /// that arbitrates concurrent provisioning is actually exercised.</para>
 /// </summary>
-public sealed class BasApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
+public class BasApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
     public const string Issuer = "https://bas.test";
     public const string Audience = "bas-api";
@@ -75,6 +75,8 @@ public sealed class BasApiFactory : WebApplicationFactory<Program>, IAsyncLifeti
             // The real migrations, applied the way a deploy applies them.
             ["Database:MigrateOnStartup"] = "true",
 
+            ["PracticeManager:Endpoint"] = "http://practicemanager.invalid:8081",
+            ["Reconciler:Enabled"] = "false",
             ["Security:DataEncryptionKey"] =
                 Convert.ToBase64String(Enumerable.Range(1, 32).Select(b => (byte)b).ToArray()),
 

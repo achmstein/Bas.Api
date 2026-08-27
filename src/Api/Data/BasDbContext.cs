@@ -19,6 +19,8 @@ public sealed class BasDbContext(DbContextOptions<BasDbContext> options) : DbCon
 
     public DbSet<BasPeriod> BasPeriods => Set<BasPeriod>();
 
+    public DbSet<SyncState> SyncStates => Set<SyncState>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Partner>(entity =>
@@ -68,6 +70,26 @@ public sealed class BasDbContext(DbContextOptions<BasDbContext> options) : DbCon
                   .OnDelete(DeleteBehavior.Cascade);
 
             entity.Ignore(e => e.IsEditable);
+        });
+
+        modelBuilder.Entity<SyncState>(entity =>
+        {
+            entity.ToTable("sync_states");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
+            entity.Property(e => e.ContentHash).HasMaxLength(64);
+            entity.Property(e => e.LastError).HasMaxLength(2000);
+
+            // One ledger row per statement.
+            entity.HasIndex(e => e.BasPeriodId).IsUnique();
+
+            // The reconciler's only query: due work, oldest first.
+            entity.HasIndex(e => new { e.Status, e.NextAttemptAt });
+
+            entity.HasOne(e => e.BasPeriod)
+                  .WithOne()
+                  .HasForeignKey<SyncState>(e => e.BasPeriodId)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<PartnerUserLink>(entity =>

@@ -28,7 +28,7 @@ Partner platform (Next.js web + Flutter)
 ```
 src/
   Contracts/        Bas.Api.Contracts (NuGet) - wire types partners and .NET consumers share
-  Api/              REST surface, partner auth, EF model + migrations
+  Api/              REST surface, partner auth, EF model + migrations, the reconciler
   ServiceDefaults/  OpenTelemetry, health checks, service discovery
   AppHost/          Aspire -> docker-compose + Caddy labels, and a Postgres for local work
 tests/
@@ -39,13 +39,12 @@ docs/
 
 ## Build status
 
-Phases **3a and 3b are complete**: the scaffold, the whole partner authentication path, and the
-partner-facing REST surface. A partner can register, obtain a token, set a worker's identity, save
-activity-statement figures and submit them. Everything up to the point where a statement is queued
-for the practice works.
+Phases **3a, 3b and 3c are complete**: the scaffold, partner authentication, the partner-facing
+REST surface, and the reconciler that pushes a submitted statement into Practice Manager. A
+statement now travels `draft -> submitted -> awaiting_statement -> pushed` on its own.
 
-Nothing reaches Practice Manager yet — that is 3c. A submitted statement sits at `submitted` until
-the reconciler exists. See *What is not here yet*.
+`in_review` and `lodged` reflect the agent's progress inside Practice Manager, which nothing reads
+back yet — that is 3d, along with the net amount. See *What is not here yet*.
 
 ## The surface
 
@@ -79,6 +78,37 @@ the reconciler exists. See *What is not here yet*.
   reconciler orphans another on every attempt.
 - **Financial years are named for the year they end**, and quarters run from July. FY2027 Q1 is
   Jul-Sep 2026.
+
+## The push
+
+`PracticeManager.Api` has no job queue by design: the caller already owns a durable record of what
+needs syncing, and duplicating that server-side would mean two systems disagreeing about the same
+work. This service is that caller, so retry is ours. `SyncState` is the ledger — subject, status,
+`DirtyAt`, `ContentHash`, `AttemptCount`, `NextAttemptAt`, `LastError` — lifted from NightTax, which
+has been running the same bargain against the same downstream for a while.
+
+It is kept separate from `BasPeriod.Status` on purpose. That status is the business fact a partner
+reads; this is retry bookkeeping. Merging them would leak plumbing into the wire contract and make
+every schedule change a breaking one.
+
+**Find, never create.** The snapshot goes out with a *blank* `statementType`, which
+`PracticeManager.Api` reads as "find the statement the ATO issued; do not create one". The ATO
+chooses the type from obligations neither service can see, and PM will create a statement of
+whatever type it is told without complaint — so a guess produces a wrong statement in the live
+practice that nobody notices until the agent opens it. When no statement exists the push returns
+`taxReturnId = 0`, the period goes to `awaiting_statement`, and it is re-checked in hours.
+
+**One at a time.** PM is a single browser session behind a queue of one. Concurrency here would not
+make anything faster; it would move the queue upstream and make failures harder to read.
+
+**Three outcomes, three responses.** A rejection spends the attempt budget and backs off. Practice
+Manager being unavailable — its `FAILED_PRECONDITION`, meaning it will not let us in — backs off but
+spends nothing, because an outage says nothing about this statement. A statement the ATO has not
+issued spends nothing either, and waits hours rather than minutes.
+
+**Unchanged content is not re-pushed.** `ContentHash` covers the figures *and* the identity, so
+correcting a misspelled surname reaches the practice while a redeploy costs nothing. That matters
+when every push consumes a slot on a session with a ten-minute cold start.
 
 ## Authentication
 
@@ -210,35 +240,27 @@ Postgres runs as a compose service with a named volume. It holds worker identity
 
 | Phase | Work |
 |---|---|
-| 3c | Reconciler calling `SyncActivityStatement` on PracticeManager.Api, with a `SyncState` ledger |
-| 3d | Status webhook + net-amount read-back |
+| 3d | Status webhook + net-amount read-back (`in_review`, `lodged`, label 9) |
 | 3e | Partner admin API (register, rotate, suspend) + per-request audit |
 
-A submitted statement currently stops at `submitted`. `awaiting_statement`, `pushed`, `in_review`,
-`lodged` and `failed` are modelled and documented but nothing sets them yet.
+A statement reaches `pushed` on its own. `in_review` and `lodged` are modelled and documented but
+nothing sets them: they reflect the agent's progress inside Practice Manager, and reading that back
+is 3d. `netAmount` is null for the same reason — `SyncActivityStatementResponse` does not carry
+label 9, so 3d needs a read-back of its own.
 
 Two questions from the plan are still open, and both gate 3c:
 
-**Who picks the statement type — settled in principle, needs 3c to implement.** The ATO issues the
-statement and chooses its type from obligations we cannot see, so nobody upstream of the ATO may
-assert one. `statementType` has been removed from the partner request accordingly; it is now
-read-only, filled in by the reconciler from the statement that actually exists.
+**Who picks the statement type — resolved.** Nobody upstream of the ATO does. `statementType` is
+gone from the partner request, and the reconciler sends it blank, which `PracticeManager.Api` now
+reads as find-only. One half remains: `BasPeriod.StatementType` is still never populated, because
+`SyncActivityStatementResponse` does not report the type of the statement it found. Reading it back
+belongs with 3d, alongside the net amount.
 
-What 3c has to do is **find, never create**. That needs one new RPC on `PracticeManager.Api`:
-
-```
-FindActivityStatement(clientId, periodStart, periodEnd)
-  -> statementId, typeVariationCode,
-     hasGST, hasPAYGI, hasPAYGW, hasFTC, hasWET, hasLCT, isG1NonEditable, ...
-```
-
-The `has*` flags come free with it and close a second gap: 3b accepts T and W figures without
-knowing whether the worker's statement carries those sections at all. With the flags, a mismatch is
-caught instead of being written into a label that does not exist.
-
-If no statement is found, the period goes to `awaiting_statement` and the reconciler retries on a
-slow cadence — the ATO issues shortly after period end, and waiting is correct. Creating one on a
-guessed type would put a wrong statement into the live practice that someone then has to delete.
+**Which labels a statement actually carries.** PM publishes `hasGST`, `hasPAYGI`, `hasPAYGW`,
+`hasFTC`, `hasWET`, `hasLCT` per statement, and none of it is exposed over gRPC yet. Until it is,
+this service will send T and W figures to a statement that may have no such section. PM writes what
+it can and reports which sections went, so nothing is corrupted — but a worker can send figures that
+quietly go nowhere. Worth closing in 3d.
 
 **Who captures the declaration.** Lodging a BAS is a legal act by the taxpayer. Either the partner
 captures it and we rely on them contractually, or the agent's own declaration covers it.
