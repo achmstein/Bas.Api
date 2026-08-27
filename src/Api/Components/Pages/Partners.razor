@@ -1,0 +1,87 @@
+@page "/admin/partners"
+@attribute [Authorize(Policy = AdminEndpoints.UiPolicyName)]
+@inject AdminService Admin
+@inject NavigationManager Navigation
+
+<h1>Partners</h1>
+<p class="lede">
+    Registered platforms. Nothing here is a secret: a client id, a public key fingerprint and a scope
+    grant. Suspending takes effect immediately — tokens already minted expire on their own within
+    minutes.
+</p>
+
+@if (_partners.Count == 0)
+{
+    <p class="empty">No partners are registered.</p>
+}
+else
+{
+    <table>
+        <thead>
+        <tr>
+            <th>Client id</th>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Scopes</th>
+            <th>Key</th>
+            <th>Webhook</th>
+            <th class="num">Workers</th>
+            <th></th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var partner in _partners)
+        {
+            <tr>
+                <td class="mono">@partner.ClientId</td>
+                <td>@partner.Name</td>
+                <td><span class="status status-@partner.Status">@partner.Status</span></td>
+                <td class="mono">@partner.AllowedScopes</td>
+                <td class="mono" title="Fingerprint of the registered public key">@partner.PublicKeyFingerprint</td>
+                <td>
+                    @if (partner.WebhookUrl is null)
+                    {
+                        <text>polling only</text>
+                    }
+                    else
+                    {
+                        <text>@(partner.HasWebhookSecret ? "signed" : "UNSIGNED")</text>
+                    }
+                </td>
+                <td class="num">@partner.WorkerCount</td>
+                <td>
+                    @if (partner.Status == "active")
+                    {
+                        <form method="post" class="inline" @formname="@($"suspend-{partner.ClientId}")"
+                              @onsubmit="() => SetStatusAsync(partner.ClientId, false)">
+                            <AntiforgeryToken />
+                            <button type="submit" class="danger">Suspend</button>
+                        </form>
+                    }
+                    else
+                    {
+                        <form method="post" class="inline" @formname="@($"resume-{partner.ClientId}")"
+                              @onsubmit="() => SetStatusAsync(partner.ClientId, true)">
+                            <AntiforgeryToken />
+                            <button type="submit">Resume</button>
+                        </form>
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<AdminPartnerResponse> _partners = [];
+
+    protected override async Task OnParametersSetAsync() =>
+        _partners = await Admin.ListPartnersAsync(CancellationToken.None);
+
+    private async Task SetStatusAsync(string clientId, bool active)
+    {
+        await Admin.SetStatusAsync(clientId, active, reason: "Changed from the admin console.", CancellationToken.None);
+        Navigation.Refresh(forceReload: true);
+    }
+}

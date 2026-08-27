@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Bas.Api.Bas;
+using Bas.Api.Statements;
 using Bas.Api.Data;
 using Bas.Api.Data.Entities;
 using Microsoft.EntityFrameworkCore;

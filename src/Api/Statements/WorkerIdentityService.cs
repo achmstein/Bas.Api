@@ -5,7 +5,7 @@ using Bas.Api.Data.Entities;
 using Bas.Api.Security;
 using Microsoft.EntityFrameworkCore;
 
-namespace Bas.Api.Bas;
+namespace Bas.Api.Statements;
 
 /// <summary>
 /// Reads and writes the worker's own identity — the details Practice Manager needs before it will

@@ -1,0 +1,24 @@
+@inherits LayoutComponentBase
+
+<header>
+    <nav>
+        <a class="brand" href="/admin/lodgements">Bas.Api</a>
+        <AuthorizeView>
+            <Authorized Context="auth">
+                <a href="/admin/lodgements">Lodgements</a>
+                <a href="/admin/partners">Partners</a>
+                <a href="/admin/audit">Audit</a>
+                <span class="spacer"></span>
+                <span class="who">@auth.User.Identity?.Name</span>
+                <form method="post" action="/admin/logout">
+                    <AntiforgeryToken />
+                    <button type="submit" class="link">Sign out</button>
+                </form>
+            </Authorized>
+        </AuthorizeView>
+    </nav>
+</header>
+
+<main>
+    @Body
+</main>

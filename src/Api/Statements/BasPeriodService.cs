@@ -4,7 +4,7 @@ using Bas.Api.Data.Entities;
 using Bas.Api.Webhooks;
 using Microsoft.EntityFrameworkCore;
 
-namespace Bas.Api.Bas;
+namespace Bas.Api.Statements;
 
 /// <summary>A refusal the caller can act on, carrying the HTTP status it should produce.</summary>
 public sealed record BasError(int StatusCode, string Title, string Detail);

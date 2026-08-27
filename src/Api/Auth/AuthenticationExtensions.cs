@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Threading.RateLimiting;
+using Bas.Api.Admin;
 using Bas.Api.Contracts.Partner;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -80,6 +81,7 @@ public static class AuthenticationExtensions
 
         builder.Services.AddAuthorizationBuilder()
             .AddScopePolicies()
+            .AddAdminPolicy()
             // Nothing partner-facing is anonymous by accident: an endpoint that forgets to state a
             // policy still requires an authenticated caller, and the token endpoint opts out
             // explicitly with AllowAnonymous.

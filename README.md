@@ -28,7 +28,8 @@ Partner platform (Next.js web + Flutter)
 ```
 src/
   Contracts/        Bas.Api.Contracts (NuGet) - wire types partners and .NET consumers share
-  Api/              REST surface, partner auth, EF model + migrations, the reconciler
+  Api/              Statements/ Auth/ Sync/ Webhooks/ Admin/ - each slice keeps its own
+                    endpoints, services and options together; Data/ holds the shared model
   ServiceDefaults/  OpenTelemetry, health checks, service discovery
   AppHost/          Aspire -> docker-compose + Caddy labels, and a Postgres for local work
 tests/
@@ -39,11 +40,12 @@ docs/
 
 ## Build status
 
-Phases **3a, 3b, 3c complete; 3d all but one piece**: the scaffold, partner authentication, the
+Phases **3a, 3b, 3c, 3e complete; 3d all but one piece**: the scaffold, partner authentication, the
 REST surface, the reconciler that pushes into Practice Manager, and signed status webhooks. A
 statement travels `draft -> submitted -> awaiting_statement -> pushed` on its own, and the partner
 is told at each step.
 
+There is an admin console at `/admin` (sign in) and a REST surface at `/admin/v1` (named API key).
 The read-back is written on the Practice Manager side — label 9, the statement type the ATO issued,
 and which sections the statement carries — but **wiring it here needs a `PracticeManager.Api.Contracts`
 release first**, because the response fields do not exist in the published package yet. See
@@ -310,9 +312,9 @@ as the database.
 
 ## What is not here yet
 
-| Phase | Work |
-|---|---|
-| 3e | Partner admin API (register, rotate, suspend) + per-request audit |
+Nothing further is planned. Per-request partner audit (stamping `partner_id` and `jti` on every
+partner-facing request, rather than only on the mint) is the one thing from the original 3e list
+that is not built — the mint is logged, but individual API calls are not.
 
 **The read-back is not wired up here yet.** `PracticeManager.Api` now reads the statement back
 inside the push and reports `netAmount`, the issued `statementType`, and the `has*` section flags on

@@ -1,7 +1,9 @@
+using Bas.Api.Admin;
 using Bas.Api.Auth;
-using Bas.Api.Bas;
+using Bas.Api.Statements;
 using Bas.Api.Data;
-using Bas.Api.Endpoints;
+using Bas.Api.Components;
+using Bas.Api.Statements;
 using Bas.Api.Infrastructure;
 using Bas.Api.Security;
 using Bas.Api.Sync;
@@ -41,6 +43,12 @@ builder.Services.AddSingleton<IDataEncryptor>(serviceProvider => DataEncryptionK
     serviceProvider.GetRequiredService<IHostEnvironment>()));
 
 builder.AddPartnerAuthentication();
+builder.AddAdminSurface();
+
+// Static server rendering only. An admin console is forms and tables; a SignalR circuit per
+// operator would buy nothing and would put a reconnect banner between David and a kill switch.
+builder.Services.AddRazorComponents();
+builder.Services.AddCascadingAuthenticationState();
 
 builder.Services.AddScoped<WorkerIdentityService>();
 builder.Services.AddScoped<BasPeriodService>();
@@ -93,6 +101,10 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddOpenApi("v1", options => options.AddDocumentTransformer<PartnerApiDocument>());
 
+// A separate document: a partner generating a client from /openapi/v1.json should not end up with
+// a suspendPartner() in their SDK.
+builder.Services.AddOpenApi(AdminEndpoints.DocumentName);
+
 builder.Services.AddProblemDetails();
 
 // DataAnnotations on request records are not enforced without this, so [Range(0, int.MaxValue)] on
@@ -107,10 +119,15 @@ app.UseCors();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseAntiforgery();
+
+app.MapStaticAssets();
 
 app.MapPartnerAuthEndpoints();
 app.MapWorkerEndpoints();
 app.MapBasEndpoints();
+app.MapAdminEndpoints();
+app.MapAdminUi();
 
 // The document the MyGigsters team generates their Next.js and Flutter clients from.
 app.MapOpenApi().AllowAnonymous();

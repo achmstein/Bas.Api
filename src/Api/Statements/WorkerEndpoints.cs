@@ -1,10 +1,10 @@
 using Bas.Api.Auth;
-using Bas.Api.Bas;
+using Bas.Api.Statements;
 using Bas.Api.Contracts.Bas;
 using Bas.Api.Contracts.Partner;
 using Microsoft.AspNetCore.Mvc;
 
-namespace Bas.Api.Endpoints;
+namespace Bas.Api.Statements;
 
 /// <summary>
 /// The worker's own identity — the details Practice Manager needs before it will create a client.

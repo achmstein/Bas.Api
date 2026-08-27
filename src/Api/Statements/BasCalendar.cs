@@ -1,4 +1,4 @@
-namespace Bas.Api.Bas;
+namespace Bas.Api.Statements;
 
 /// <summary>One quarter of an Australian financial year, with the dates the ATO works to.</summary>
 /// <param name="FinancialYear">Named for the year it <em>ends</em> — FY2027 runs 1 Jul 2026 to 30 Jun 2027.</param>

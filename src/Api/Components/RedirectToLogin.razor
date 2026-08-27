@@ -1,0 +1,12 @@
+@inject NavigationManager Navigation
+
+@code {
+    // Carries where they were headed, so signing in lands them back on it rather than the home page.
+    protected override void OnInitialized()
+    {
+        var returnUrl = Uri.EscapeDataString(
+            Navigation.ToBaseRelativePath(Navigation.Uri));
+
+        Navigation.NavigateTo($"/admin/login?returnUrl=/{returnUrl}", forceLoad: true);
+    }
+}

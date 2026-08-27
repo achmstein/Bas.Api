@@ -1,4 +1,4 @@
-namespace Bas.Api.Bas;
+namespace Bas.Api.Statements;
 
 /// <summary>
 /// Structural validation of an Australian Tax File Number.

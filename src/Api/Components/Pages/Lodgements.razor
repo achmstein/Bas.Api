@@ -1,0 +1,100 @@
+@page "/admin/lodgements"
+@attribute [Authorize(Policy = AdminEndpoints.UiPolicyName)]
+@inject AdminService Admin
+@inject NavigationManager Navigation
+
+<h1>Lodgements</h1>
+<p class="lede">
+    Activity statements in flight, newest first. Tax file numbers are never shown here — Practice
+    Manager holds the real one, and no operational question needs it.
+</p>
+
+<div class="filters">
+    @foreach (var option in Filters)
+    {
+        <a href="@($"/admin/lodgements{(option.Value is null ? "" : $"?status={option.Value}")}")">
+            @(option.Value == Status ? $"[{option.Label}]" : option.Label)
+        </a>
+    }
+</div>
+
+@if (_rows.Count == 0)
+{
+    <p class="empty">Nothing here@(Status is null ? "" : $" with status {Status}").</p>
+}
+else
+{
+    <table>
+        <thead>
+        <tr>
+            <th>Period</th>
+            <th>Partner</th>
+            <th>Their user</th>
+            <th>Status</th>
+            <th class="num">Net</th>
+            <th>Sync</th>
+            <th>Last error</th>
+            <th></th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var row in _rows)
+        {
+            <tr>
+                <td>FY@(row.FinancialYear) Q@(row.Quarter)</td>
+                <td>@(row.PartnerId ?? "—")</td>
+                <td class="mono">@(row.PartnerSub ?? "—")</td>
+                <td><span class="status status-@row.Status">@row.Status</span></td>
+                <td class="num">@(row.NetAmount is null ? "—" : $"${row.NetAmount:N0}")</td>
+                <td>
+                    @(row.SyncStatus ?? "—")
+                    @if (row.AttemptCount is > 0)
+                    {
+                        <text> (@row.AttemptCount tries)</text>
+                    }
+                </td>
+                <td>@(row.LastError ?? row.FailureReason ?? "")</td>
+                <td>
+                    @if (row.Status is not "draft")
+                    {
+                        <form method="post" class="inline" @formname="@($"retry-{row.PeriodId}")"
+                              @onsubmit="() => RetryAsync(row.PeriodId)">
+                            <AntiforgeryToken />
+                            <button type="submit">Retry</button>
+                        </form>
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    [SupplyParameterFromQuery]
+    private string? Status { get; set; }
+
+    private IReadOnlyList<AdminLodgementResponse> _rows = [];
+
+    private static readonly (string Label, string? Value)[] Filters =
+    [
+        ("All", null),
+        ("Submitted", "submitted"),
+        ("Awaiting ATO", "awaiting_statement"),
+        ("Pushed", "pushed"),
+        ("Failed", "failed"),
+        ("Lodged", "lodged")
+    ];
+
+    protected override async Task OnParametersSetAsync() =>
+        _rows = await Admin.ListLodgementsAsync(Status, 100, CancellationToken.None);
+
+    private async Task RetryAsync(Guid periodId)
+    {
+        await Admin.RetryLodgementAsync(periodId, CancellationToken.None);
+
+        // Reload rather than mutating in place: the retry also resets the sync ledger, and showing
+        // a half-updated row would be worse than a redraw.
+        Navigation.Refresh(forceReload: true);
+    }
+}

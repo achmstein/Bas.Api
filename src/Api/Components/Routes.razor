@@ -1,0 +1,16 @@
+<Router AppAssembly="typeof(Program).Assembly">
+    <Found Context="routeData">
+        <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(AdminLayout)">
+            <NotAuthorized>
+                @* Signed out, or the cookie expired mid-task. Bounce to the sign-in page rather
+                   than showing a bare 403 the operator cannot act on. *@
+                <RedirectToLogin />
+            </NotAuthorized>
+        </AuthorizeRouteView>
+    </Found>
+    <NotFound>
+        <LayoutView Layout="typeof(AdminLayout)">
+            <p>No such page.</p>
+        </LayoutView>
+    </NotFound>
+</Router>

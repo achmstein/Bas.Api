@@ -1,4 +1,6 @@
+using Bas.Api.Admin;
 using Bas.Api.Data.Entities;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace Bas.Api.Data;
@@ -7,7 +9,8 @@ namespace Bas.Api.Data;
 /// The service's own store. Postgres in every deployed environment; the model is kept
 /// provider-neutral so the test suite can run it on SQLite without a Docker daemon.
 /// </summary>
-public sealed class BasDbContext(DbContextOptions<BasDbContext> options) : DbContext(options)
+public sealed class BasDbContext(DbContextOptions<BasDbContext> options)
+    : IdentityDbContext<AdminUser>(options)
 {
     public DbSet<Partner> Partners => Set<Partner>();
 
@@ -23,8 +26,23 @@ public sealed class BasDbContext(DbContextOptions<BasDbContext> options) : DbCon
 
     public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
 
+    public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // Identity's own tables. They are only reachable by an administrator signing in, and they
+        // have nothing to do with a worker or a partner, so they are prefixed to keep them visually
+        // apart from the domain in a database browser.
+        base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<AdminUser>().ToTable("admin_users");
+        modelBuilder.Entity<Microsoft.AspNetCore.Identity.IdentityRole>().ToTable("admin_roles");
+        modelBuilder.Entity<Microsoft.AspNetCore.Identity.IdentityUserRole<string>>().ToTable("admin_user_roles");
+        modelBuilder.Entity<Microsoft.AspNetCore.Identity.IdentityUserClaim<string>>().ToTable("admin_user_claims");
+        modelBuilder.Entity<Microsoft.AspNetCore.Identity.IdentityUserLogin<string>>().ToTable("admin_user_logins");
+        modelBuilder.Entity<Microsoft.AspNetCore.Identity.IdentityUserToken<string>>().ToTable("admin_user_tokens");
+        modelBuilder.Entity<Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>>().ToTable("admin_role_claims");
+
         modelBuilder.Entity<Partner>(entity =>
         {
             entity.ToTable("partners");
@@ -117,6 +135,20 @@ public sealed class BasDbContext(DbContextOptions<BasDbContext> options) : DbCon
                   .WithMany()
                   .HasForeignKey(e => e.BasPeriodId)
                   .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AuditEntry>(entity =>
+        {
+            entity.ToTable("audit_entries");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Action).HasMaxLength(100).IsRequired();
+            entity.Property(e => e.Actor).HasMaxLength(100).IsRequired();
+            entity.Property(e => e.Subject).HasMaxLength(200);
+            entity.Property(e => e.Detail).HasMaxLength(2000);
+
+            // The only way it is ever read: newest first, optionally narrowed to one subject.
+            entity.HasIndex(e => e.At);
+            entity.HasIndex(e => new { e.Subject, e.At });
         });
 
         modelBuilder.Entity<PartnerUserLink>(entity =>

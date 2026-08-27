@@ -1,0 +1,83 @@
+@page "/admin/login"
+@layout EmptyLayout
+@using Microsoft.AspNetCore.Identity
+@inject SignInManager<AdminUser> SignIn
+@inject UserManager<AdminUser> Users
+@inject NavigationManager Navigation
+@inject TimeProvider Clock
+@attribute [AllowAnonymous]
+
+<div class="card">
+    <h1>Bas.Api admin</h1>
+    <p class="lede">Sign in to continue.</p>
+
+    <EditForm Model="Input" FormName="signin" OnValidSubmit="SignInAsync">
+        <AntiforgeryToken />
+
+        <label for="email">Email</label>
+        <InputText id="email" @bind-Value="Input.Email" autocomplete="username" />
+
+        <label for="password">Password</label>
+        <InputText id="password" type="password" @bind-Value="Input.Password" autocomplete="current-password" />
+
+        <button type="submit">Sign in</button>
+    </EditForm>
+
+    @if (_error is not null)
+    {
+        <p class="error">@_error</p>
+    }
+</div>
+
+@code {
+    [SupplyParameterFromForm]
+    private Credentials Input { get; set; } = new();
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    private string? _error;
+
+    private async Task SignInAsync()
+    {
+        var result = await SignIn.PasswordSignInAsync(
+            Input.Email ?? string.Empty,
+            Input.Password ?? string.Empty,
+            isPersistent: false,
+            lockoutOnFailure: true);
+
+        if (result.Succeeded)
+        {
+            if (await Users.FindByEmailAsync(Input.Email ?? string.Empty) is { } user)
+            {
+                user.LastSignedInAt = Clock.GetUtcNow();
+                await Users.UpdateAsync(user);
+            }
+
+            // forceLoad so the new cookie is on the request that renders the destination.
+            Navigation.NavigateTo(Safe(ReturnUrl), forceLoad: true);
+            return;
+        }
+
+        // One message for every failure. Distinguishing "no such account" from "wrong password"
+        // tells someone probing which addresses are real.
+        _error = result.IsLockedOut
+            ? "That account is locked for a few minutes after too many attempts."
+            : "Those details were not accepted.";
+    }
+
+    /// <summary>Only same-site paths, so a crafted returnUrl cannot bounce an operator off-site.</summary>
+    private string Safe(string? returnUrl) =>
+        !string.IsNullOrWhiteSpace(returnUrl)
+        && Uri.TryCreate(returnUrl, UriKind.Relative, out _)
+        && returnUrl.StartsWith('/')
+        && !returnUrl.StartsWith("//")
+            ? returnUrl
+            : "/admin/lodgements";
+
+    private sealed class Credentials
+    {
+        public string? Email { get; set; }
+        public string? Password { get; set; }
+    }
+}

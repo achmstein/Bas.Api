@@ -1,3 +1,4 @@
+using Bas.Api.Admin;
 using Bas.Api.Auth;
 using Bas.Api.Data.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -45,6 +46,9 @@ public sealed class DatabaseStartupService(
         }
 
         await ReconcilePartnersAsync(db, cancellationToken);
+
+        // Admin accounts, so a fresh deployment has someone who can sign in.
+        await scope.ServiceProvider.GetRequiredService<AdminIdentitySeeder>().SeedAsync(cancellationToken);
 
         // Last, because it writes through the schema the migration just established.
         await keyStore.EnsureCurrentAsync(cancellationToken);
@@ -94,28 +98,24 @@ public sealed class DatabaseStartupService(
                 continue;
             }
 
-            var changed =
+            // Bootstrap only. Once a partner exists, the admin API is the single source of truth
+            // for it - otherwise rotating a key through the API would be silently undone by the
+            // next deploy, which is the worst of both worlds. Differences are reported rather than
+            // applied, so a stale config file is visible instead of dangerous.
+            var differs =
                 existing.Name != registration.Name ||
                 existing.PublicKeyPem != registration.PublicKeyPem ||
-                existing.WebhookUrl != registration.WebhookUrl ||
-                existing.WebhookSecret != registration.WebhookSecret ||
                 existing.AllowedScopes != registration.AllowedScopes ||
+                existing.WebhookUrl != registration.WebhookUrl ||
                 existing.Status != status;
 
-            if (!changed)
-                continue;
-
-            existing.Name = registration.Name;
-            existing.PublicKeyPem = registration.PublicKeyPem;
-            existing.WebhookUrl = registration.WebhookUrl;
-            existing.WebhookSecret = registration.WebhookSecret;
-            existing.AllowedScopes = registration.AllowedScopes;
-            existing.Status = status;
-            existing.UpdatedAt = now;
-
-            logger.LogInformation(
-                "Updated partner {ClientId}: scopes [{Scopes}], status {Status}.",
-                registration.ClientId, registration.AllowedScopes, status);
+            if (differs)
+            {
+                logger.LogWarning(
+                    "Partner {ClientId} differs from configuration, which is bootstrap-only - the admin " +
+                    "API is authoritative. Configuration was NOT applied. Change it through the API, or " +
+                    "delete the row to re-seed.", registration.ClientId);
+            }
         }
 
         await db.SaveChangesAsync(cancellationToken);

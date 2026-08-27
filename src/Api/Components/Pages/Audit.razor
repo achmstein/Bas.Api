@@ -1,0 +1,48 @@
+@page "/admin/audit"
+@attribute [Authorize(Policy = AdminEndpoints.UiPolicyName)]
+@inject AdminService Admin
+
+<h1>Audit</h1>
+<p class="lede">
+    Changes made through the admin surface, newest first. Reads are not recorded — every
+    partner-facing request already logs its partner and token id, and recording every page view
+    would bury the entries that matter.
+</p>
+
+@if (_entries.Count == 0)
+{
+    <p class="empty">Nothing has been changed yet.</p>
+}
+else
+{
+    <table>
+        <thead>
+        <tr>
+            <th>When (UTC)</th>
+            <th>Action</th>
+            <th>Who</th>
+            <th>Subject</th>
+            <th>Detail</th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var entry in _entries)
+        {
+            <tr>
+                <td class="mono">@entry.At.UtcDateTime.ToString("yyyy-MM-dd HH:mm")</td>
+                <td class="mono">@entry.Action</td>
+                <td>@entry.Actor</td>
+                <td class="mono">@(entry.Subject ?? "—")</td>
+                <td>@(entry.Detail ?? "")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<AuditEntryResponse> _entries = [];
+
+    protected override async Task OnParametersSetAsync() =>
+        _entries = await Admin.ListAuditAsync(subject: null, 200, CancellationToken.None);
+}
