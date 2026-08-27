@@ -300,14 +300,45 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
     [Fact]
     public async Task The_console_sends_a_signed_out_visitor_to_the_login_page()
     {
-        using var client = _factory.CreateClient(
-            new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        // Never a JSON 401. An operator whose cookie expired mid-task needs somewhere to go, and
+        // the fallback policy used to catch these routes before the router ran and answer a browser
+        // with application/problem+json.
+        foreach (var path in new[] { "/admin", "/admin/lodgements", "/admin/partners", "/admin/audit" })
+        {
+            var response = await _client.GetAsync(path);
 
-        var response = await client.GetAsync("/admin/lodgements");
+            response.StatusCode.ShouldNotBe(HttpStatusCode.Unauthorized, $"{path} answered a JSON 401");
+            response.Content.Headers.ContentType?.MediaType.ShouldNotBe("application/problem+json");
+        }
 
-        // Not a bare 403: an operator whose cookie expired mid-task needs somewhere to go.
-        response.StatusCode.ShouldBeOneOf(HttpStatusCode.Redirect, HttpStatusCode.Found, HttpStatusCode.OK);
-        (await client.GetAsync("/admin/login")).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await _client.GetAsync("/admin/login")).StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task The_sign_in_form_carries_an_antiforgery_token_that_can_be_decrypted()
+    {
+        // The Data Protection key ring used to live inside the container, so every redeploy threw
+        // it away and the next sign-in failed with a bare HTTP 400 - the token could no longer be
+        // decrypted. Keys are in Postgres now; this proves a token round-trips.
+        var page = await _client.GetStringAsync("/admin/login");
+
+        var token = System.Text.RegularExpressions.Regex.Match(
+            page, "name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"");
+        token.Success.ShouldBeTrue("the sign-in form rendered no antiforgery token");
+
+        var form = new Dictionary<string, string>
+        {
+            ["__RequestVerificationToken"] = token.Groups[1].Value,
+            ["Input.Email"] = "nobody@example.com",
+            ["Input.Password"] = "not-the-password",
+            ["_handler"] = "signin",
+        };
+
+        var response = await _client.PostAsync("/admin/login", new FormUrlEncodedContent(form));
+
+        // 200 re-rendering "those details were not accepted" is the pass. A 400 means antiforgery
+        // rejected the token, which is the failure this test exists for.
+        response.StatusCode.ShouldNotBe(HttpStatusCode.BadRequest, "antiforgery rejected its own token");
     }
 
     // ------------------------------------------------------------------------------ helpers

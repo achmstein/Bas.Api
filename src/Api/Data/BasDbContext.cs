@@ -1,5 +1,6 @@
 using Bas.Api.Admin;
 using Bas.Api.Data.Entities;
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,8 +11,18 @@ namespace Bas.Api.Data;
 /// provider-neutral so the test suite can run it on SQLite without a Docker daemon.
 /// </summary>
 public sealed class BasDbContext(DbContextOptions<BasDbContext> options)
-    : IdentityDbContext<AdminUser>(options)
+    : IdentityDbContext<AdminUser>(options), IDataProtectionKeyContext
 {
+    /// <summary>
+    /// The Data Protection key ring, which protects antiforgery tokens and the admin auth cookie.
+    ///
+    /// <para>In the database rather than on disk. The container has no persistent volume, so the
+    /// default file location meant every redeploy threw the keys away - and with them every
+    /// antiforgery token, so a sign-in form rendered before a deploy failed afterwards with a bare
+    /// HTTP 400.</para>
+    /// </summary>
+    public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
+
     public DbSet<Partner> Partners => Set<Partner>();
 
     public DbSet<PartnerUserLink> PartnerUserLinks => Set<PartnerUserLink>();
@@ -42,6 +53,7 @@ public sealed class BasDbContext(DbContextOptions<BasDbContext> options)
         modelBuilder.Entity<Microsoft.AspNetCore.Identity.IdentityUserLogin<string>>().ToTable("admin_user_logins");
         modelBuilder.Entity<Microsoft.AspNetCore.Identity.IdentityUserToken<string>>().ToTable("admin_user_tokens");
         modelBuilder.Entity<Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>>().ToTable("admin_role_claims");
+        modelBuilder.Entity<DataProtectionKey>().ToTable("data_protection_keys");
 
         modelBuilder.Entity<Partner>(entity =>
         {

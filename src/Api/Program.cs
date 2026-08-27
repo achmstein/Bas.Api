@@ -1,4 +1,5 @@
 using Bas.Api.Admin;
+using Microsoft.AspNetCore.DataProtection;
 using Bas.Api.Auth;
 using Bas.Api.Statements;
 using Bas.Api.Data;
@@ -37,6 +38,13 @@ builder.Services.AddOptions<DatabaseOptions>()
 builder.Services.AddOptions<PartnerRegistrationOptions>()
     .Bind(builder.Configuration.GetSection(PartnerRegistrationOptions.SectionName))
     .ValidateOnStart();
+
+// The Data Protection key ring, in Postgres. It protects antiforgery tokens and the admin auth
+// cookie, and the default on-disk location is inside a container with no volume - so every deploy
+// invalidated both. A fixed application name keeps the ring stable across image rebuilds.
+builder.Services.AddDataProtection()
+    .SetApplicationName("bas-api")
+    .PersistKeysToDbContext<BasDbContext>();
 
 builder.AddPartnerAuthentication();
 builder.AddAdminSurface();

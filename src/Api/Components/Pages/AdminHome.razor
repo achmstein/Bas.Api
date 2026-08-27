@@ -1,0 +1,11 @@
+@page "/admin"
+@attribute [AllowAnonymous]
+@inject NavigationManager Navigation
+
+@* /admin is what someone types. Send them on rather than showing them a 404 - and to a page that
+   requires authorisation, so an unauthenticated visitor lands on the sign-in form from here. *@
+
+@code {
+    protected override void OnInitialized() =>
+        Navigation.NavigateTo("/admin/lodgements", forceLoad: true);
+}
