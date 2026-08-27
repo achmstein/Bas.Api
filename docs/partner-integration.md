@@ -22,7 +22,10 @@ rotate in lockstep with us.
 
 ### Generating the key pair
 
-Run `generate-partner-key.sh`, which came with this guide, or the two commands it wraps:
+Easiest, and no terminal needed: open **https://bas.nighttax.com.au/key** and click Generate. The
+pair is created by your own browser and nothing is uploaded — we never see the half you keep.
+
+Or run `generate-partner-key.sh`, which came with this guide, or the two commands it wraps:
 
 ```bash
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out bas-signing.key

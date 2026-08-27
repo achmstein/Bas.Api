@@ -137,7 +137,8 @@
     display: grid;
     gap: .3rem;
   }
-  footer a { color: var(--accent); text-decoration: none; }
+  a { color: var(--accent); }
+  footer a { text-decoration: none; }
   footer a:hover, footer a:focus-visible { text-decoration: underline; }
   a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -195,8 +196,10 @@
     <p>Two things, once. Neither is secret, so email is fine.</p>
     <ul class="plain">
       <li>A short name for your platform — we have assumed <code>mygigsters</code>.</li>
-      <li>A public key file. One command generates it; the matching private half never leaves your
-        servers, so there is no password to send or rotate between us.</li>
+      <li>A public key file. Create it at
+        <a href="https://bas.nighttax.com.au/key">bas.nighttax.com.au/key</a> — one click, no
+        engineer needed. Your browser makes the pair and keeps the private half; there is no
+        password to send or rotate between us.</li>
     </ul>
   </section>
 
