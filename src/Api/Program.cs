@@ -128,6 +128,8 @@ app.UseAuthentication();
 app.UsePartnerRequestAudit();
 
 app.UseAuthorization();
+// Before UseAntiforgery: it works by catching what that middleware throws.
+app.UseAntiforgeryRecovery();
 app.UseAntiforgery();
 
 app.MapStaticAssets();

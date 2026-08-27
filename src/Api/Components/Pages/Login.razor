@@ -22,9 +22,11 @@
             <h1 class="text-[15px] font-semibold text-zinc-900">Sign in</h1>
             <p class="text-sm text-zinc-500 mt-1 mb-6">Activity statement administration.</p>
 
+            @* No <AntiforgeryToken /> here. EditForm renders one itself when it has a FormName,
+               and adding a second means the browser posts the field twice - which arrives as
+               "token1,token2", fails to decrypt, and answers a bare HTTP 400. Hand-built test
+               requests missed it because they sent only the first of the two. *@
             <EditForm Model="Input" FormName="signin" OnValidSubmit="SignInAsync">
-                <AntiforgeryToken />
-
                 <label for="email" class="block text-xxs font-medium uppercase tracking-[0.08em] text-zinc-500 mb-1.5">
                     Email
                 </label>

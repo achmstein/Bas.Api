@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using Bas.Api.Admin;
 using Bas.Api.Contracts.Bas;
 using Bas.Api.Contracts.Partner;
@@ -315,29 +316,37 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
     }
 
     [Fact]
-    public async Task The_sign_in_form_carries_an_antiforgery_token_that_can_be_decrypted()
+    public async Task The_sign_in_form_posts_the_way_a_browser_posts_it()
     {
-        // The Data Protection key ring used to live inside the container, so every redeploy threw
-        // it away and the next sign-in failed with a bare HTTP 400 - the token could no longer be
-        // decrypted. Keys are in Postgres now; this proves a token round-trips.
+        // Submits EVERY hidden field the page rendered, duplicates included, because that is what a
+        // browser does. An earlier version of this test picked the first match of each name and so
+        // sailed past a form that rendered __RequestVerificationToken twice - the browser posted
+        // both, antiforgery saw "token1,token2", and every sign-in answered a bare HTTP 400.
         var page = await _client.GetStringAsync("/admin/login");
 
-        var token = System.Text.RegularExpressions.Regex.Match(
-            page, "name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"");
-        token.Success.ShouldBeTrue("the sign-in form rendered no antiforgery token");
+        var hidden = Regex.Matches(page, "<input[^>]*type=\"hidden\"[^>]*>")
+            .Select(m => m.Value)
+            .Select(tag => (
+                Name: Regex.Match(tag, "name=\"([^\"]+)\"").Groups[1].Value,
+                Value: Regex.Match(tag, "value=\"([^\"]*)\"").Groups[1].Value))
+            .Where(f => f.Name.Length > 0)
+            .ToList();
 
-        var form = new Dictionary<string, string>
-        {
-            ["__RequestVerificationToken"] = token.Groups[1].Value,
-            ["Input.Email"] = "nobody@example.com",
-            ["Input.Password"] = "not-the-password",
-            ["_handler"] = "signin",
-        };
+        hidden.ShouldContain(f => f.Name == "__RequestVerificationToken");
 
-        var response = await _client.PostAsync("/admin/login", new FormUrlEncodedContent(form));
+        // One token, or the browser posts a value antiforgery cannot read.
+        hidden.Count(f => f.Name == "__RequestVerificationToken")
+            .ShouldBe(1, "the form rendered more than one antiforgery token");
 
-        // 200 re-rendering "those details were not accepted" is the pass. A 400 means antiforgery
-        // rejected the token, which is the failure this test exists for.
+        var body = hidden
+            .Select(f => (KeyValuePair<string, string>)new(f.Name, f.Value))
+            .Append(new KeyValuePair<string, string>("Input.Email", "nobody@example.com"))
+            .Append(new KeyValuePair<string, string>("Input.Password", "not-the-password"));
+
+        var response = await _client.PostAsync("/admin/login", new FormUrlEncodedContent(body));
+
+        // Re-rendering "those details were not accepted" is the pass. A 400 means antiforgery
+        // rejected the page's own token, which is the failure this exists to catch.
         response.StatusCode.ShouldNotBe(HttpStatusCode.BadRequest, "antiforgery rejected its own token");
     }
 
