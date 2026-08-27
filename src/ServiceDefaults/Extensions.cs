@@ -85,12 +85,16 @@ public static class Extensions
 
     public static WebApplication MapDefaultEndpoints(this WebApplication app)
     {
-        app.MapHealthChecks(HealthEndpointPath);
+        // Anonymous, explicitly. This service sets a fallback policy requiring an authenticated
+        // caller, which silently swept the health endpoints up with it - so /health answered 401 to
+        // the container healthcheck, the load balancer and any uptime monitor, all of which read
+        // that as "down". A health endpoint that needs a credential is not a health endpoint.
+        app.MapHealthChecks(HealthEndpointPath).AllowAnonymous();
 
         app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions
         {
             Predicate = r => r.Tags.Contains("live")
-        });
+        }).AllowAnonymous();
 
         return app;
     }
