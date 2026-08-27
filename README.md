@@ -230,11 +230,58 @@ expiry and replay are tested without waiting.
 builds the image, generates the compose file with `aspire publish`, and ships it to the same
 Lightsail box as `PracticeManager.Api`, behind the same Caddy.
 
-Required secrets: `POSTGRES_PASSWORD`, `DATA_ENCRYPTION_KEY`, `DEPLOY_SSH_KEY`.
-Required variables: `SERVER_HOST`, `SERVER_USER`, `BAS_REMOTE_DIR`.
+### Deploy PracticeManager.Api first
 
-Postgres runs as a compose service with a named volume. It holds worker identity and, from 3b, TFNs
-— back it up.
+**This ordering is not optional.** The reconciler sends a blank `statementType`, meaning "find the
+statement the ATO issued; do not create one". A `PracticeManager.Api` older than the
+`find-only-activity-statement` change rejects that with `InvalidArgument`, which this service reads
+as a rejection — so every push would spend its attempt budget and land in `failed` after eight
+tries, on statements that were perfectly good.
+
+The change is backward-compatible in the other direction: blank was previously rejected outright, so
+deploying it early breaks nothing that works today.
+
+### First deploy
+
+1. Generate the at-rest encryption key and store it as the `DATA_ENCRYPTION_KEY` secret:
+
+   ```bash
+   openssl rand -base64 32
+   ```
+
+   **Keep a copy somewhere that outlives the box.** Losing it makes every stored signing key
+   undecryptable, and every token in flight invalid.
+
+2. Set the remaining repository secrets: `POSTGRES_PASSWORD`, `DEPLOY_SSH_KEY`,
+   `PRACTICEMANAGER_API_KEY` (the same value as `PracticeManager.Api`'s `SECURITY_API_KEY`).
+
+3. Set the repository variables: `SERVER_HOST`, `SERVER_USER`, `BAS_REMOTE_DIR`.
+
+4. Point `bas.nighttax.com.au` at the box. Caddy picks it up from the compose labels.
+
+5. Register the partner. Until the admin API lands (3e) that means adding their public key to
+   configuration and redeploying — see *Registering a partner*.
+
+6. Confirm the service is up and that a partner can authenticate:
+
+   ```bash
+   curl -s https://bas.nighttax.com.au/health
+   ```
+
+### Back up Postgres
+
+Nothing else holds this data. It is every worker's identity, their encrypted TFNs, and their lodged
+figures — and git is explicitly not backing it up.
+
+```bash
+# On the box. Adjust the compose service name if it differs.
+sudo docker compose exec -T bas-postgres   pg_dump -U bas -d basdb --format=custom   > "/var/backups/bas/basdb-$(date -u +%Y%m%d-%H%M).dump"
+```
+
+Worth a nightly cron and off-box copies. Two things to remember when restoring: the dump is
+useless without `DATA_ENCRYPTION_KEY`, since TFNs and signing keys are encrypted with it; and the
+dump itself contains personal information under the Privacy Act TFN Rule, so it needs the same care
+as the database.
 
 ## What is not here yet
 
