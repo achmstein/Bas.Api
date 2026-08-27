@@ -10,6 +10,7 @@ using Bas.Api.Sync;
 using Bas.Api.Webhooks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -134,8 +135,30 @@ app.MapBasEndpoints();
 app.MapAdminEndpoints();
 app.MapAdminUi();
 
-// The document the MyGigsters team generates their Next.js and Flutter clients from.
-app.MapOpenApi().AllowAnonymous();
+// The partner document, and browsable reference docs over it. Both anonymous: this is the
+// specification a partner integrates against, and it describes nothing that is not already public
+// once they hold a client id.
+app.MapOpenApi("/openapi/{documentName}.json")
+    .AllowAnonymous()
+    // The admin document is a separate matter - it is a map of the operations surface, and while
+    // every route on it is protected, publishing the map serves nobody outside the practice.
+    .AddEndpointFilter(async (context, next) =>
+    {
+        var documentName = context.HttpContext.Request.RouteValues["documentName"] as string;
+
+        if (documentName == AdminEndpoints.DocumentName
+            && context.HttpContext.User.Identity?.IsAuthenticated is not true)
+        {
+            return Results.NotFound();
+        }
+
+        return await next(context);
+    });
+
+app.MapScalarApiReference("/docs", options => options
+    .WithTitle("Bas.Api")
+    .AddDocument("v1", "Partner API", "/openapi/v1.json"))
+    .AllowAnonymous();
 
 app.MapDefaultEndpoints();
 

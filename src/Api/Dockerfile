@@ -12,10 +12,21 @@ ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 
 # Restore against csproj files only, so a source-only change doesn't re-download packages.
+COPY nuget.config                               .
 COPY src/Contracts/Contracts.csproj             Contracts/
 COPY src/ServiceDefaults/ServiceDefaults.csproj ServiceDefaults/
 COPY src/Api/Api.csproj                         Api/
-RUN dotnet restore Api/Api.csproj
+
+# PracticeManager.Api.Contracts comes from GitHub Packages, which needs credentials even for a
+# public package. Mounted as a BuildKit secret rather than passed as a build arg: an ARG is
+# recorded in the image history, and a token in image history is a token that has leaked.
+RUN --mount=type=secret,id=gh_token \
+    dotnet nuget update source GitHubPackages \
+      --username ci \
+      --password "$(cat /run/secrets/gh_token)" \
+      --store-password-in-clear-text \
+      --configfile nuget.config \
+ && dotnet restore Api/Api.csproj
 
 COPY src/Contracts/       Contracts/
 COPY src/ServiceDefaults/ ServiceDefaults/

@@ -65,6 +65,11 @@ release first**, because the response fields do not exist in the published packa
 | `GET /api/v1/bas/{fy}/{q}/status` | `bas:read` | Status + the net amount PM computed. |
 
 `docs/partner-integration.md` is the partner-facing version, with working Next.js and Dart.
+Browsable reference docs are at `/docs`, generated from `/openapi/v1.json`.
+
+The admin document is served at `/openapi/admin.json` but only to an authenticated caller. Every
+route on it is protected either way; publishing a map of the operations surface just serves nobody
+outside the practice.
 
 ### Rules worth knowing before reading the code
 

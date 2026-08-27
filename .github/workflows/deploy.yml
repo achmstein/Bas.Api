@@ -14,6 +14,9 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +29,15 @@ jobs:
       # The suite runs against a real Postgres via Testcontainers, using the Docker daemon the
       # runner already provides. That is deliberate: SQLite would skip the migrations entirely and
       # serialise the concurrency test into a no-op.
+      # GitHub Packages needs credentials even for a public package.
+      - name: Authenticate to GitHub Packages
+        run: |
+          dotnet nuget update source GitHubPackages \
+            --username ${{ github.actor }} \
+            --password ${{ secrets.GITHUB_TOKEN }} \
+            --store-password-in-clear-text \
+            --configfile nuget.config
+
       - name: Test
         run: dotnet test tests/Api.Tests/Api.Tests.csproj -c Release
 
@@ -44,6 +56,15 @@ jobs:
           dotnet-version: '10.0.x'
           cache: true
           cache-dependency-path: '**/*.csproj'
+
+      # GitHub Packages needs credentials even for a public package.
+      - name: Authenticate to GitHub Packages
+        run: |
+          dotnet nuget update source GitHubPackages \
+            --username ${{ github.actor }} \
+            --password ${{ secrets.GITHUB_TOKEN }} \
+            --store-password-in-clear-text \
+            --configfile nuget.config
 
       - name: Compute package version
         id: version
@@ -87,9 +108,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push bas-api
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bas-api
-          docker build \
+          DOCKER_BUILDKIT=1 docker build \
+            --secret id=gh_token,env=GH_TOKEN \
             -f src/Api/Dockerfile \
             -t $IMG:${{ steps.tag.outputs.tag }} \
             -t $IMG:latest \
@@ -101,6 +125,9 @@ jobs:
     name: Generate docker-compose
     runs-on: ubuntu-latest
     needs: build-and-push
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
 
@@ -109,6 +136,15 @@ jobs:
           dotnet-version: '10.0.x'
           cache: true
           cache-dependency-path: '**/*.csproj'
+
+      # GitHub Packages needs credentials even for a public package.
+      - name: Authenticate to GitHub Packages
+        run: |
+          dotnet nuget update source GitHubPackages \
+            --username ${{ github.actor }} \
+            --password ${{ secrets.GITHUB_TOKEN }} \
+            --store-password-in-clear-text \
+            --configfile nuget.config
 
       - name: Install Aspire CLI
         run: dotnet tool install -g Aspire.Cli
