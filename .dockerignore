@@ -1,0 +1,16 @@
+# Local build artefacts must not enter the build context: they carry host-specific absolute paths
+# in project.assets.json, which makes the in-container restore/publish fail in ways that never
+# reproduce in CI (where the checkout is clean).
+**/bin/
+**/obj/
+**/publish/
+
+.git/
+.github/
+.vs/
+**/*.user
+tests/
+
+# Never bake local secrets into an image layer.
+**/appsettings.Development.json
+.env

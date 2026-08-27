@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>Bas.Api.Tests</AssemblyName>
+    <RootNamespace>Bas.Api.Tests</RootNamespace>
+
+    <!-- xunit v3 runs on Microsoft.Testing.Platform: the test project is its own executable, and
+         the .NET 10 SDK requires opting in explicitly before `dotnet test` will drive it. -->
+    <OutputType>Exe</OutputType>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Api\Api.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />
+    <!-- A real Postgres, not a stand-in. SQLite would run without a Docker daemon, but it cannot
+         apply the migrations - only EnsureCreated, which builds the schema from the model and so
+         leaves the migrations themselves untested - and it serialises writes, which silently turns
+         the provisioning race test into a no-op. Both are exactly what this suite exists to cover. -->
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.14.0" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.9.0" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="xunit.v3" Version="4.0.0" />
+  </ItemGroup>
+
+</Project>

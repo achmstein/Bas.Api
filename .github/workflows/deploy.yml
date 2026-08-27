@@ -1,0 +1,177 @@
+name: Build and Deploy
+
+on:
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}
+  SERVER_HOST: ${{ vars.SERVER_HOST }}
+  SERVER_USER: ${{ vars.SERVER_USER }}
+  REMOTE_DIR: ${{ vars.BAS_REMOTE_DIR }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          cache: true
+          cache-dependency-path: '**/*.csproj'
+
+      # The suite runs against a real Postgres via Testcontainers, using the Docker daemon the
+      # runner already provides. That is deliberate: SQLite would skip the migrations entirely and
+      # serialise the concurrency test into a no-op.
+      - name: Test
+        run: dotnet test tests/Api.Tests/Api.Tests.csproj -c Release
+
+  publish-contracts:
+    name: Publish Bas.Api.Contracts NuGet
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          cache: true
+          cache-dependency-path: '**/*.csproj'
+
+      - name: Compute package version
+        id: version
+        run: echo "version=1.0.0-ci.$(date -u +%Y%m%d%H%M%S).${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Pack
+        run: |
+          dotnet pack src/Contracts/Contracts.csproj \
+            -c Release \
+            -o ./nupkgs \
+            /p:Version=${{ steps.version.outputs.version }}
+
+      - name: Push to GitHub Packages
+        run: |
+          dotnet nuget push "./nupkgs/*.nupkg" \
+            --source "https://nuget.pkg.github.com/${{ env.IMAGE_NAMESPACE }}/index.json" \
+            --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --skip-duplicate
+
+  build-and-push:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: tag
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push bas-api
+        run: |
+          IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bas-api
+          docker build \
+            -f src/Api/Dockerfile \
+            -t $IMG:${{ steps.tag.outputs.tag }} \
+            -t $IMG:latest \
+            .
+          docker push $IMG:${{ steps.tag.outputs.tag }}
+          docker push $IMG:latest
+
+  generate-compose:
+    name: Generate docker-compose
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          cache: true
+          cache-dependency-path: '**/*.csproj'
+
+      - name: Install Aspire CLI
+        run: dotnet tool install -g Aspire.Cli
+
+      - name: Generate publish artifacts
+        run: aspire publish --project src/AppHost --output-path ./publish --non-interactive
+
+      - name: Write .env
+        run: |
+          cat > publish/.env <<'EOF'
+          BAS_API_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bas-api:${{ needs.build-and-push.outputs.image_tag }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          DATA_ENCRYPTION_KEY=${{ secrets.DATA_ENCRYPTION_KEY }}
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compose
+          path: publish/
+          include-hidden-files: true
+
+  deploy:
+    name: Deploy to server
+    runs-on: ubuntu-latest
+    needs: [build-and-push, generate-compose]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: compose
+          path: publish/
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Bootstrap server (Docker if missing)
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} bash <<'EOF'
+            set -e
+            if ! command -v docker >/dev/null 2>&1; then
+              curl -fsSL https://get.docker.com | sudo sh
+              sudo usermod -aG docker ubuntu
+            fi
+            mkdir -p ${{ env.REMOTE_DIR }}
+          EOF
+
+      - name: Copy compose files
+        run: |
+          scp -i ~/.ssh/deploy_key \
+            publish/docker-compose.yaml \
+            publish/.env \
+            ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:${{ env.REMOTE_DIR }}/
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} bash <<EOF
+            set -e
+            cd ${{ env.REMOTE_DIR }}
+            echo "${{ secrets.GITHUB_TOKEN }}" | sudo docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+            sudo docker compose pull
+            sudo docker compose up -d
+            sudo docker image prune -f
+          EOF

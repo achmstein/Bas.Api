@@ -1,0 +1,11 @@
+bin/
+obj/
+*.user
+.vs/
+.env
+publish/
+appsettings.Development.json
+*.log
+
+# Local Postgres data, if a container is bound to a host directory.
+data/

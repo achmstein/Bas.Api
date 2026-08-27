@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>bas-api-2026</UserSecretsId>
+    <!-- Project directory is Api (src/ layout, mirroring PracticeManager.Api); the assembly and
+         namespaces carry the fully-qualified name, which is also the container entrypoint. -->
+    <AssemblyName>Bas.Api</AssemblyName>
+    <RootNamespace>Bas.Api</RootNamespace>
+    <!-- The integration tests drive the real pipeline through WebApplicationFactory, which needs
+         the entry point to be reachable. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Contracts\Contracts.csproj" />
+    <ProjectReference Include="..\ServiceDefaults\ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />
+    <!-- Explicit, though Npgsql already pulls it: Npgsql asks for an older Relational, and the only
+         thing raising it to 10.0.11 was EntityFrameworkCore.Design - which is PrivateAssets=all and
+         so does not flow to referencing projects. That left the test project binding this assembly
+         at 10.0.4 while Api.dll had been compiled against 10.0.11. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <!-- Pinned to the version Microsoft.AspNetCore.Authentication.JwtBearer 10.0.11 resolves, so
+         token creation here and token validation in the middleware share one IdentityModel. -->
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.19.2" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bas.Api.Tests" />
+  </ItemGroup>
+
+</Project>
