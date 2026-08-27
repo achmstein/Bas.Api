@@ -3,6 +3,7 @@ using System.Text;
 using Bas.Api.Bas;
 using Bas.Api.Data;
 using Bas.Api.Data.Entities;
+using Bas.Api.Webhooks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -133,6 +134,7 @@ public sealed class BasReconciler(
         var db = services.GetRequiredService<BasDbContext>();
         var gateway = services.GetRequiredService<IPracticeManagerGateway>();
         var identity = services.GetRequiredService<WorkerIdentityService>();
+        var webhooks = services.GetRequiredService<WebhookPublisher>();
 
         var state = await db.SyncStates.SingleOrDefaultAsync(s => s.BasPeriodId == periodId, cancellationToken);
         var period = await db.BasPeriods.SingleOrDefaultAsync(p => p.Id == periodId, cancellationToken);
@@ -143,7 +145,7 @@ public sealed class BasReconciler(
         var worker = await db.Workers.SingleOrDefaultAsync(w => w.Id == period.WorkerId, cancellationToken);
         if (worker is null)
         {
-            await FailAsync(db, state, period, "The worker no longer exists.", cancellationToken);
+            await FailAsync(db, webhooks, state, period, "The worker no longer exists.", cancellationToken);
             return;
         }
 
@@ -151,7 +153,7 @@ public sealed class BasReconciler(
         if (string.IsNullOrEmpty(tfn))
         {
             // Submit already refuses this, so reaching it means the identity was cleared afterwards.
-            await FailAsync(db, state, period, "The worker has no TFN on file.", cancellationToken);
+            await FailAsync(db, webhooks, state, period, "The worker has no TFN on file.", cancellationToken);
             return;
         }
 
@@ -164,6 +166,7 @@ public sealed class BasReconciler(
             return;
 
         var now = timeProvider.GetUtcNow();
+        var previousStatus = period.Status;
         var outcome = await gateway.PushAsync(period, worker, tfn, cancellationToken);
 
         switch (outcome)
@@ -223,7 +226,7 @@ public sealed class BasReconciler(
 
                 if (state.AttemptCount >= _options.MaxAttempts)
                 {
-                    await FailAsync(db, state, period, rejected.Reason, cancellationToken);
+                    await FailAsync(db, webhooks, state, period, rejected.Reason, cancellationToken);
                     return;
                 }
 
@@ -235,13 +238,21 @@ public sealed class BasReconciler(
                 break;
         }
 
+        await webhooks.EnqueueStatusChangeAsync(period, previousStatus, cancellationToken);
+
         await db.SaveChangesAsync(cancellationToken);
     }
 
     private async Task FailAsync(
-        BasDbContext db, SyncState state, BasPeriod period, string reason, CancellationToken cancellationToken)
+        BasDbContext db,
+        WebhookPublisher webhooks,
+        SyncState state,
+        BasPeriod period,
+        string reason,
+        CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
+        var previousStatus = period.Status;
 
         state.Status = SyncStatus.Failed;
         state.LastError = reason;
@@ -254,6 +265,8 @@ public sealed class BasReconciler(
         logger.LogError(
             "Giving up on statement {PeriodId} (FY{Year} Q{Quarter}) after {Attempts} attempt(s): {Reason}",
             period.Id, period.FinancialYear, period.Quarter, state.AttemptCount, reason);
+
+        await webhooks.EnqueueStatusChangeAsync(period, previousStatus, cancellationToken);
 
         await db.SaveChangesAsync(cancellationToken);
     }

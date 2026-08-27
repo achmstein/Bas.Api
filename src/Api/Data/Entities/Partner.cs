@@ -40,6 +40,20 @@ public sealed class Partner
     /// </summary>
     public required string AllowedScopes { get; set; }
 
+    /// <summary>
+    /// Where status changes are POSTed, if the partner wants them. Optional: polling
+    /// <c>GET /api/v1/bas/{fy}/{q}/status</c> works whether or not this is set, so a partner is
+    /// never blocked on standing up an endpoint.
+    /// </summary>
+    public string? WebhookUrl { get; set; }
+
+    /// <summary>
+    /// Shared secret for the HMAC signature on outbound webhooks. A secret is appropriate here in a
+    /// way it would not be on the token endpoint: leaking it lets someone send this partner a false
+    /// status update, which is bounded, rather than mint tokens for any worker.
+    /// </summary>
+    public string? WebhookSecret { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; }

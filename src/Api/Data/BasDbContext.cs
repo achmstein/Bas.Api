@@ -21,6 +21,8 @@ public sealed class BasDbContext(DbContextOptions<BasDbContext> options) : DbCon
 
     public DbSet<SyncState> SyncStates => Set<SyncState>();
 
+    public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Partner>(entity =>
@@ -31,6 +33,8 @@ public sealed class BasDbContext(DbContextOptions<BasDbContext> options) : DbCon
             entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
             entity.Property(e => e.PublicKeyPem).HasMaxLength(4000).IsRequired();
             entity.Property(e => e.AllowedScopes).HasMaxLength(500).IsRequired();
+            entity.Property(e => e.WebhookUrl).HasMaxLength(2000);
+            entity.Property(e => e.WebhookSecret).HasMaxLength(200);
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
             entity.HasIndex(e => e.ClientId).IsUnique();
         });
@@ -89,6 +93,29 @@ public sealed class BasDbContext(DbContextOptions<BasDbContext> options) : DbCon
             entity.HasOne(e => e.BasPeriod)
                   .WithOne()
                   .HasForeignKey<SyncState>(e => e.BasPeriodId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<WebhookDelivery>(entity =>
+        {
+            entity.ToTable("webhook_deliveries");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.EventType).HasMaxLength(100).IsRequired();
+            entity.Property(e => e.Payload).IsRequired();
+            entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
+            entity.Property(e => e.LastError).HasMaxLength(2000);
+
+            // The dispatcher's only query: due deliveries, oldest first.
+            entity.HasIndex(e => new { e.Status, e.NextAttemptAt });
+
+            entity.HasOne(e => e.Partner)
+                  .WithMany()
+                  .HasForeignKey(e => e.PartnerId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.BasPeriod)
+                  .WithMany()
+                  .HasForeignKey(e => e.BasPeriodId)
                   .OnDelete(DeleteBehavior.Cascade);
         });
 

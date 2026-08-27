@@ -79,6 +79,8 @@ public sealed class DatabaseStartupService(
                     ClientId = registration.ClientId,
                     Name = registration.Name,
                     PublicKeyPem = registration.PublicKeyPem,
+                    WebhookUrl = registration.WebhookUrl,
+                    WebhookSecret = registration.WebhookSecret,
                     AllowedScopes = registration.AllowedScopes,
                     Status = status,
                     CreatedAt = now,
@@ -95,6 +97,8 @@ public sealed class DatabaseStartupService(
             var changed =
                 existing.Name != registration.Name ||
                 existing.PublicKeyPem != registration.PublicKeyPem ||
+                existing.WebhookUrl != registration.WebhookUrl ||
+                existing.WebhookSecret != registration.WebhookSecret ||
                 existing.AllowedScopes != registration.AllowedScopes ||
                 existing.Status != status;
 
@@ -103,6 +107,8 @@ public sealed class DatabaseStartupService(
 
             existing.Name = registration.Name;
             existing.PublicKeyPem = registration.PublicKeyPem;
+            existing.WebhookUrl = registration.WebhookUrl;
+            existing.WebhookSecret = registration.WebhookSecret;
             existing.AllowedScopes = registration.AllowedScopes;
             existing.Status = status;
             existing.UpdatedAt = now;

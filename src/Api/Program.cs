@@ -5,6 +5,7 @@ using Bas.Api.Endpoints;
 using Bas.Api.Infrastructure;
 using Bas.Api.Security;
 using Bas.Api.Sync;
+using Bas.Api.Webhooks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -59,6 +60,21 @@ builder.Services
 
 builder.Services.AddScoped<IPracticeManagerGateway, PracticeManagerGateway>();
 builder.Services.AddHostedService<BasReconciler>();
+
+// Outbound status webhooks. Optional for a partner - polling the status route works whether or not
+// they register a URL - so nothing here is on the critical path of a lodgement.
+builder.Services.AddOptions<WebhookOptions>()
+    .Bind(builder.Configuration.GetSection(WebhookOptions.SectionName));
+
+builder.Services.AddHttpClient(WebhookDispatcher.HttpClientName)
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        // A redirect would deliver a signed payload to an address the partner did not register.
+        AllowAutoRedirect = false
+    });
+
+builder.Services.AddScoped<WebhookPublisher>();
+builder.Services.AddHostedService<WebhookDispatcher>();
 
 builder.Services.AddHostedService<DatabaseStartupService>();
 

@@ -485,3 +485,82 @@ stop being accepted — so switch to signing with the new one only once we have 
 
 If you need a zero-gap rotation, tell us and we will register the new key alongside the old one for
 a window. Given a ten-minute token lifetime, a brief coordinated switch is usually simpler.
+
+## 14. Status webhooks (optional)
+
+Polling `GET /api/v1/bas/{fy}/{q}/status` works whether or not you set this up, so nothing is
+blocked on it. Webhooks just mean you find out sooner.
+
+Send us a URL and a secret of your choosing, and we will POST to it when a statement changes status.
+
+### What arrives
+
+```http
+POST /your/webhook/endpoint
+Content-Type: application/json
+X-Bas-Event: bas.status_changed
+X-Bas-Delivery: 0198f2d0-4c31-7a02-9b55-1e0f7b3a9d21
+X-Bas-Signature: t=1759372269,v1=6f8c0b0e...
+```
+
+```json
+{
+  "event": "bas.status_changed",
+  "deliveryId": "0198f2d0-4c31-7a02-9b55-1e0f7b3a9d21",
+  "occurredAt": "2026-10-02T04:11:09Z",
+  "workerId": "0198f2c1-...",
+  "partnerSub": "4471",
+  "financialYear": 2027,
+  "quarter": 1,
+  "status": "in_review",
+  "previousStatus": "pushed",
+  "netAmount": 2030
+}
+```
+
+`partnerSub` is **your** id for the worker, so you need no lookup table on your side.
+
+There are deliberately no tax figures in the body. A webhook passes through logs and proxies neither
+of us controls, and you already hold a token — fetch the detail if you need it.
+
+### Verifying the signature
+
+`X-Bas-Signature` is `t=<unix seconds>,v1=<hex HMAC-SHA256>`. The signed material is
+`"{t}.{raw request body}"`, keyed with the secret you gave us. Same shape as Stripe's, so if you
+have done that one you have done this one.
+
+```ts
+import { createHmac, timingSafeEqual } from 'node:crypto'
+
+export function verify(rawBody: string, header: string, secret: string) {
+  const parts = Object.fromEntries(header.split(',').map(p => p.split('=', 2)))
+  const timestamp = Number(parts.t)
+
+  // Reject anything older than five minutes: without this, a captured request can be replayed
+  // at any point in the future and will still verify.
+  if (!Number.isFinite(timestamp) || Math.abs(Date.now() / 1000 - timestamp) > 300) return false
+
+  const expected = createHmac('sha256', secret).update(`${parts.t}.${rawBody}`).digest('hex')
+  const a = Buffer.from(expected)
+  const b = Buffer.from(parts.v1 ?? '')
+
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+```
+
+Verify against the **raw body**, before any JSON parsing. Re-serialising changes the bytes and the
+signature will not match.
+
+### Rules for your endpoint
+
+- **Answer 2xx quickly.** Acknowledge, then do the work. We time out at ten seconds.
+- **Deduplicate on `X-Bas-Delivery`.** Delivery is at least once: a slow answer, or one that arrives
+  after the connection dropped, means you will be told twice.
+- **Do not assume order.** Retries can arrive after a later event. `previousStatus` and
+  `occurredAt` let you discard one that has been overtaken.
+- **A 4xx makes us stop** (except 408 and 429). We read it as "this request is not wanted" and give
+  up on that delivery — you can still poll. A 5xx or a timeout is retried, backing off from 30
+  seconds to six hours, ten attempts.
+
+If we cannot reach you at all, nothing is lost: the statement still progresses, and the status
+endpoint still tells you where it got to.

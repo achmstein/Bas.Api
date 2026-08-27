@@ -40,6 +40,12 @@ public sealed class PartnerRegistration
     [Required]
     public string AllowedScopes { get; set; } = string.Empty;
 
+    /// <summary>Optional. Where to POST status changes. Polling works regardless.</summary>
+    public string? WebhookUrl { get; set; }
+
+    /// <summary>Shared secret for the webhook HMAC signature. Required if a URL is set.</summary>
+    public string? WebhookSecret { get; set; }
+
     /// <summary>Set false to suspend without removing the registration — the kill switch.</summary>
     public bool Active { get; set; } = true;
 }

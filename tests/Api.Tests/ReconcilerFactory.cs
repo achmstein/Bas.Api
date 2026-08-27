@@ -14,7 +14,7 @@ namespace Bas.Api.Tests;
 /// <see cref="BasReconciler.SweepAsync"/> directly, so a sweep happens exactly when a test says so
 /// rather than whenever a timer fires.</para>
 /// </summary>
-public sealed class ReconcilerFactory : BasApiFactory
+public class ReconcilerFactory : BasApiFactory
 {
     public FakePracticeManager Gateway { get; } = new();
 

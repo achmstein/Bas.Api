@@ -1,6 +1,7 @@
 using Bas.Api.Contracts.Bas;
 using Bas.Api.Data;
 using Bas.Api.Data.Entities;
+using Bas.Api.Webhooks;
 using Microsoft.EntityFrameworkCore;
 
 namespace Bas.Api.Bas;
@@ -15,7 +16,8 @@ public sealed record BasError(int StatusCode, string Title, string Detail);
 /// question is answered once, by the caller, from the token's subject. There is no code path here
 /// that can reach another worker's statement.</para>
 /// </summary>
-public sealed class BasPeriodService(BasDbContext db, TimeProvider timeProvider)
+public sealed class BasPeriodService(
+    BasDbContext db, TimeProvider timeProvider, WebhookPublisher webhooks)
 {
     /// <summary>How many past quarters a worker sees when they have never saved anything.</summary>
     private const int VisibleQuarters = 8;
@@ -217,6 +219,7 @@ public sealed class BasPeriodService(BasDbContext db, TimeProvider timeProvider)
         }
 
         var now = timeProvider.GetUtcNow();
+        var previousStatus = period.Status;
         period.Status = BasPeriodStatus.Submitted;
         period.SubmittedAt = now;
         period.FailureReason = null;
@@ -247,6 +250,10 @@ public sealed class BasPeriodService(BasDbContext db, TimeProvider timeProvider)
             state.LastError = null;
             state.UpdatedAt = now;
         }
+
+        // Enqueued into the same unit of work as the status change it describes, so a submit that
+        // rolls back cannot leave a webhook promising something that never happened.
+        await webhooks.EnqueueStatusChangeAsync(period, previousStatus, cancellationToken);
 
         await db.SaveChangesAsync(cancellationToken);
 

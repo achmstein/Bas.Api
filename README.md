@@ -39,12 +39,15 @@ docs/
 
 ## Build status
 
-Phases **3a, 3b and 3c are complete**: the scaffold, partner authentication, the partner-facing
-REST surface, and the reconciler that pushes a submitted statement into Practice Manager. A
-statement now travels `draft -> submitted -> awaiting_statement -> pushed` on its own.
+Phases **3a, 3b, 3c complete; 3d all but one piece**: the scaffold, partner authentication, the
+REST surface, the reconciler that pushes into Practice Manager, and signed status webhooks. A
+statement travels `draft -> submitted -> awaiting_statement -> pushed` on its own, and the partner
+is told at each step.
 
-`in_review` and `lodged` reflect the agent's progress inside Practice Manager, which nothing reads
-back yet — that is 3d, along with the net amount. See *What is not here yet*.
+The read-back is written on the Practice Manager side — label 9, the statement type the ATO issued,
+and which sections the statement carries — but **wiring it here needs a `PracticeManager.Api.Contracts`
+release first**, because the response fields do not exist in the published package yet. See
+*What is not here yet*.
 
 ## The surface
 
@@ -109,6 +112,28 @@ issued spends nothing either, and waits hours rather than minutes.
 **Unchanged content is not re-pushed.** `ContentHash` covers the figures *and* the identity, so
 correcting a misspelled surname reaches the practice while a redeploy costs nothing. That matters
 when every push consumes a slot on a session with a ten-minute cold start.
+
+## Telling the partner
+
+Every status change is queued as a `WebhookDelivery` in the same transaction as the change itself,
+so a submit that rolls back cannot leave a webhook promising something that never happened. A
+separate dispatcher delivers them.
+
+**Optional, and never on the critical path.** A partner with no registered URL simply polls, and
+polling keeps working even when delivery has been abandoned — so a statement is never stuck because
+a webhook did not arrive. Failures log at warning, not error, for that reason.
+
+**Signed, not merely posted.** HMAC-SHA256 over `timestamp.payload`, in `X-Bas-Signature`, Stripe's
+shape. The timestamp is inside the signed material so a captured request cannot be replayed for
+ever. A shared secret is appropriate here in a way it is not on the token endpoint: leaking it lets
+someone send a partner a false status update — bounded, and not a disclosure — rather than mint
+tokens for any worker.
+
+**No tax figures in the payload.** It carries which statement changed and to what. A webhook passes
+through logs and proxies we do not control, and the partner already holds a token.
+
+**At least once**, with `X-Bas-Delivery` to deduplicate on. A 4xx other than 408/429 stops delivery
+immediately: repeating a request the partner has rejected will not start working.
 
 ## Authentication
 
@@ -287,13 +312,19 @@ as the database.
 
 | Phase | Work |
 |---|---|
-| 3d | Status webhook + net-amount read-back (`in_review`, `lodged`, label 9) |
 | 3e | Partner admin API (register, rotate, suspend) + per-request audit |
 
-A statement reaches `pushed` on its own. `in_review` and `lodged` are modelled and documented but
-nothing sets them: they reflect the agent's progress inside Practice Manager, and reading that back
-is 3d. `netAmount` is null for the same reason — `SyncActivityStatementResponse` does not carry
-label 9, so 3d needs a read-back of its own.
+**The read-back is not wired up here yet.** `PracticeManager.Api` now reads the statement back
+inside the push and reports `netAmount`, the issued `statementType`, and the `has*` section flags on
+`SyncActivityStatementResponse` — but those fields are additive and unpublished, so this service
+still cannot see them. Once the contracts package ships, `PracticeManagerGateway` maps them onto
+`PushOutcome.Pushed` and the reconciler copies them onto the period. Until then `netAmount` and
+`StatementType` stay null.
+
+`in_review` and `lodged` are modelled, documented and delivered by webhook, but nothing sets them
+yet: they reflect the agent's own progress inside Practice Manager, and PM exposes no status field
+for a statement that has been harvested and verified. That is the last piece of 3d, and it needs a
+harvest against the live practice rather than a guess at a field name.
 
 Two questions from the plan are still open, and both gate 3c:
 
