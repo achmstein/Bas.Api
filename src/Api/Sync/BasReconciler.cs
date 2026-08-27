@@ -133,7 +133,6 @@ public sealed class BasReconciler(
     {
         var db = services.GetRequiredService<BasDbContext>();
         var gateway = services.GetRequiredService<IPracticeManagerGateway>();
-        var identity = services.GetRequiredService<WorkerIdentityService>();
         var webhooks = services.GetRequiredService<WebhookPublisher>();
 
         var state = await db.SyncStates.SingleOrDefaultAsync(s => s.BasPeriodId == periodId, cancellationToken);
@@ -149,7 +148,7 @@ public sealed class BasReconciler(
             return;
         }
 
-        var tfn = identity.RevealTfn(worker);
+        var tfn = WorkerIdentityService.RevealTfn(worker);
         if (string.IsNullOrEmpty(tfn))
         {
             // Submit already refuses this, so reaching it means the identity was cleared afterwards.

@@ -3,71 +3,87 @@
 @inject AdminService Admin
 @inject NavigationManager Navigation
 
-<h1>Lodgements</h1>
-<p class="lede">
+<div class="flex items-baseline justify-between gap-4 flex-wrap mb-1">
+    <h1 class="text-lg font-semibold tracking-tight text-zinc-900">Lodgements</h1>
+    <span class="text-xxs font-mono text-zinc-400 tabular-nums">@_rows.Count shown</span>
+</div>
+<p class="text-sm text-zinc-500 mb-6 max-w-2xl">
     Activity statements in flight, newest first. Tax file numbers are never shown here — Practice
     Manager holds the real one, and no operational question needs it.
 </p>
 
-<div class="filters">
+<div class="flex items-center gap-1 mb-4 overflow-x-auto no-scrollbar">
     @foreach (var option in Filters)
     {
-        <a href="@($"/admin/lodgements{(option.Value is null ? "" : $"?status={option.Value}")}")">
-            @(option.Value == Status ? $"[{option.Label}]" : option.Label)
+        var selected = option.Value == Status;
+        <a href="@($"/admin/lodgements{(option.Value is null ? "" : $"?status={option.Value}")}")"
+           class="@($"px-2.5 py-1 rounded-md text-sm font-medium whitespace-nowrap transition-colors {(selected ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/70")}")">
+            @option.Label
         </a>
     }
 </div>
 
 @if (_rows.Count == 0)
 {
-    <p class="empty">Nothing here@(Status is null ? "" : $" with status {Status}").</p>
+    <div class="bg-white border border-zinc-200/70 rounded-xl px-6 py-16 text-center">
+        <p class="text-sm text-zinc-500">Nothing here@(Status is null ? "" : $" with status {Status}").</p>
+    </div>
 }
 else
 {
-    <table>
-        <thead>
-        <tr>
-            <th>Period</th>
-            <th>Partner</th>
-            <th>Their user</th>
-            <th>Status</th>
-            <th class="num">Net</th>
-            <th>Sync</th>
-            <th>Last error</th>
-            <th></th>
-        </tr>
-        </thead>
-        <tbody>
-        @foreach (var row in _rows)
-        {
-            <tr>
-                <td>FY@(row.FinancialYear) Q@(row.Quarter)</td>
-                <td>@(row.PartnerId ?? "—")</td>
-                <td class="mono">@(row.PartnerSub ?? "—")</td>
-                <td><span class="status status-@row.Status">@row.Status</span></td>
-                <td class="num">@(row.NetAmount is null ? "—" : $"${row.NetAmount:N0}")</td>
-                <td>
-                    @(row.SyncStatus ?? "—")
-                    @if (row.AttemptCount is > 0)
-                    {
-                        <text> (@row.AttemptCount tries)</text>
-                    }
-                </td>
-                <td>@(row.LastError ?? row.FailureReason ?? "")</td>
-                <td>
-                    @if (row.Status is not "draft")
-                    {
-                        <form method="post" class="inline" @formname="@($"retry-{row.PeriodId}")"
-                              @onsubmit="() => RetryAsync(row.PeriodId)">
-                            <AntiforgeryToken />
-                            <button type="submit">Retry</button>
-                        </form>
-                    }
-                </td>
-            </tr>
-        }
-        </tbody>
-    </table>
+    <div class="bg-white border border-zinc-200/70 rounded-xl overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                <tr class="border-b border-zinc-200/70 bg-zinc-50/60">
+                    <th class="text-left font-medium text-xxs uppercase tracking-[0.08em] text-zinc-500 px-4 py-2.5">Period</th>
+                    <th class="text-left font-medium text-xxs uppercase tracking-[0.08em] text-zinc-500 px-4 py-2.5">Partner</th>
+                    <th class="text-left font-medium text-xxs uppercase tracking-[0.08em] text-zinc-500 px-4 py-2.5">Their user</th>
+                    <th class="text-left font-medium text-xxs uppercase tracking-[0.08em] text-zinc-500 px-4 py-2.5">Status</th>
+                    <th class="text-right font-medium text-xxs uppercase tracking-[0.08em] text-zinc-500 px-4 py-2.5">Net</th>
+                    <th class="text-left font-medium text-xxs uppercase tracking-[0.08em] text-zinc-500 px-4 py-2.5">Sync</th>
+                    <th class="text-left font-medium text-xxs uppercase tracking-[0.08em] text-zinc-500 px-4 py-2.5">Last error</th>
+                    <th class="px-4 py-2.5"></th>
+                </tr>
+                </thead>
+                <tbody>
+                @foreach (var row in _rows)
+                {
+                    <tr class="border-b border-zinc-100 last:border-0 hover:bg-zinc-50/60 transition-colors">
+                        <td class="px-4 py-2.5 font-mono text-zinc-900 whitespace-nowrap">FY@(row.FinancialYear) Q@(row.Quarter)</td>
+                        <td class="px-4 py-2.5 text-zinc-600">@(row.PartnerId ?? "—")</td>
+                        <td class="px-4 py-2.5 font-mono text-xs text-zinc-500">@(row.PartnerSub ?? "—")</td>
+                        <td class="px-4 py-2.5"><span class="@StatusClass(row.Status)">@row.Status</span></td>
+                        <td class="px-4 py-2.5 text-right tabular-nums font-mono text-zinc-900">
+                            @(row.NetAmount is null ? "—" : $"${row.NetAmount:N0}")
+                        </td>
+                        <td class="px-4 py-2.5 text-zinc-500 text-xs whitespace-nowrap">
+                            @(row.SyncStatus ?? "—")@(row.AttemptCount is > 0 ? $" · {row.AttemptCount} tries" : "")
+                        </td>
+                        <td class="px-4 py-2.5 text-xs text-zinc-500 max-w-xs truncate" title="@(row.LastError ?? row.FailureReason)">
+                            @(row.LastError ?? row.FailureReason ?? "")
+                        </td>
+                        <td class="px-4 py-2.5 text-right">
+                            @if (row.Status is not "draft")
+                            {
+                                <form method="post" class="inline m-0" @formname="@($"retry-{row.PeriodId}")"
+                                      @onsubmit="() => RetryAsync(row.PeriodId)">
+                                    <AntiforgeryToken />
+                                    <button type="submit"
+                                            class="px-2 py-1 text-xs font-medium rounded-md border border-zinc-200
+                                                   text-zinc-600 hover:text-zinc-900 hover:border-zinc-300
+                                                   hover:bg-zinc-50 transition-colors">
+                                        Retry
+                                    </button>
+                                </form>
+                            }
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
 }
 
 @code {
@@ -85,6 +101,20 @@ else
         ("Failed", "failed"),
         ("Lodged", "lodged")
     ];
+
+    private const string Pill = "inline-flex items-center px-2 py-0.5 rounded-full text-xxs font-medium border";
+
+    /// <summary>Colour carries the meaning a glance needs: red is stuck, green is done.</summary>
+    private static string StatusClass(string status) => status switch
+    {
+        "failed" => $"{Pill} bg-red-50 text-red-700 border-red-200",
+        "lodged" => $"{Pill} bg-emerald-50 text-emerald-700 border-emerald-200",
+        "in_review" => $"{Pill} bg-indigo-50 text-indigo-700 border-indigo-200",
+        "pushed" => $"{Pill} bg-sky-50 text-sky-700 border-sky-200",
+        "awaiting_statement" => $"{Pill} bg-amber-50 text-amber-700 border-amber-200",
+        "submitted" => $"{Pill} bg-zinc-100 text-zinc-700 border-zinc-200",
+        _ => $"{Pill} bg-white text-zinc-500 border-zinc-200"
+    };
 
     protected override async Task OnParametersSetAsync() =>
         _rows = await Admin.ListLodgementsAsync(Status, 100, CancellationToken.None);

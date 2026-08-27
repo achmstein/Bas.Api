@@ -161,11 +161,8 @@ jobs:
           cat > publish/.env <<'EOF'
           BAS_API_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/bas-api:${{ needs.build-and-push.outputs.image_tag }}
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-          DATA_ENCRYPTION_KEY=${{ secrets.DATA_ENCRYPTION_KEY }}
           PRACTICEMANAGER_ENDPOINT=${{ vars.PRACTICEMANAGER_ENDPOINT || 'http://practicemanager-api:8081' }}
           PRACTICEMANAGER_API_KEY=${{ secrets.PRACTICEMANAGER_API_KEY }}
-          ADMIN_EMAIL=${{ vars.ADMIN_EMAIL }}
-          ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }}
           ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}
           EOF
 

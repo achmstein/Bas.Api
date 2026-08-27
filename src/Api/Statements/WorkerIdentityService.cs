@@ -1,8 +1,6 @@
-using System.Text;
 using Bas.Api.Contracts.Bas;
 using Bas.Api.Data;
 using Bas.Api.Data.Entities;
-using Bas.Api.Security;
 using Microsoft.EntityFrameworkCore;
 
 namespace Bas.Api.Statements;
@@ -13,12 +11,9 @@ namespace Bas.Api.Statements;
 /// </summary>
 public sealed class WorkerIdentityService(
     BasDbContext db,
-    IDataEncryptor encryptor,
     TimeProvider timeProvider,
     ILogger<WorkerIdentityService> logger)
 {
-    /// <summary>Purpose binding for an encrypted TFN.</summary>
-    public const string TfnPurpose = "bas.worker.tfn.v1";
 
     public async Task<WorkerIdentityResponse?> GetAsync(
         Guid workerId, string partnerId, CancellationToken cancellationToken)
@@ -62,7 +57,7 @@ public sealed class WorkerIdentityService(
 
         var tfn = TfnValidator.Normalise(request.Tfn);
 
-        worker.TfnProtected = encryptor.Encrypt(Encoding.UTF8.GetBytes(tfn), TfnPurpose);
+        worker.Tfn = tfn;
         worker.TfnLast3 = tfn[^3..];
         worker.Abn = string.IsNullOrEmpty(abn) ? null : abn;
         worker.FirstName = request.FirstName.Trim();
@@ -83,19 +78,16 @@ public sealed class WorkerIdentityService(
     }
 
     /// <summary>
-    /// The TFN in the clear, for the Practice Manager push in phase 3c and nothing else. Never
-    /// call this on a path that produces a response or a log line.
+    /// The TFN in full, for the Practice Manager push and nothing else. Never call this on a path
+    /// that produces a response or a log line - those get <c>TfnMasked</c>.
     /// </summary>
-    public string? RevealTfn(Worker worker) =>
-        worker.TfnProtected is null
-            ? null
-            : Encoding.UTF8.GetString(encryptor.Decrypt(worker.TfnProtected, TfnPurpose));
+    public static string? RevealTfn(Worker worker) => worker.Tfn;
 
     private static WorkerIdentityResponse ToResponse(Worker worker, string partnerId) => new()
     {
         WorkerId = worker.Id,
         PartnerId = partnerId,
-        // Masked from the stored last three digits, so producing a response never decrypts anything.
+        // Built from the stored last three digits, so a response is never assembled from the TFN.
         TfnMasked = worker.TfnLast3 is null ? null : $"******{worker.TfnLast3}",
         Abn = worker.Abn,
         FirstName = worker.FirstName,

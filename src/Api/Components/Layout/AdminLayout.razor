@@ -1,24 +1,56 @@
 @inherits LayoutComponentBase
 
-<header>
-    <nav>
-        <a class="brand" href="/admin/lodgements">Bas.Api</a>
+<header class="sticky top-0 z-40 backdrop-blur-md bg-white/75 border-b border-zinc-200/70">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3 sm:gap-7 min-w-0">
+            <a href="/admin/lodgements" class="flex items-center gap-3 group flex-shrink-0">
+                <span class="font-display font-bold text-[15px] tracking-[0.04em] text-zinc-900 leading-none flex items-baseline">
+                    <span>BAS</span>
+                    <span class="mx-1.5 text-zinc-300 font-normal">/</span>
+                    <span>API</span>
+                </span>
+                <span class="hidden sm:inline text-xxs font-mono font-medium px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500 tracking-[0.12em]">ADMIN</span>
+            </a>
+            <AuthorizeView>
+                <Authorized Context="auth">
+                    <nav class="flex items-center gap-0.5 text-sm overflow-x-auto no-scrollbar whitespace-nowrap">
+                        <NavLink href="/admin/lodgements"
+                                 ActiveClass="!text-zinc-900 !bg-zinc-100"
+                                 class="px-2.5 sm:px-3 py-1.5 rounded-md text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/70 transition-colors font-medium flex-shrink-0">
+                            Lodgements
+                        </NavLink>
+                        <NavLink href="/admin/partners"
+                                 ActiveClass="!text-zinc-900 !bg-zinc-100"
+                                 class="px-2.5 sm:px-3 py-1.5 rounded-md text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/70 transition-colors font-medium flex-shrink-0">
+                            Partners
+                        </NavLink>
+                        <NavLink href="/admin/audit"
+                                 ActiveClass="!text-zinc-900 !bg-zinc-100"
+                                 class="px-2.5 sm:px-3 py-1.5 rounded-md text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/70 transition-colors font-medium flex-shrink-0">
+                            Audit
+                        </NavLink>
+                    </nav>
+                </Authorized>
+            </AuthorizeView>
+        </div>
+
         <AuthorizeView>
             <Authorized Context="auth">
-                <a href="/admin/lodgements">Lodgements</a>
-                <a href="/admin/partners">Partners</a>
-                <a href="/admin/audit">Audit</a>
-                <span class="spacer"></span>
-                <span class="who">@auth.User.Identity?.Name</span>
-                <form method="post" action="/admin/logout">
-                    <AntiforgeryToken />
-                    <button type="submit" class="link">Sign out</button>
-                </form>
+                <div class="flex items-center gap-3 text-xs text-zinc-500 flex-shrink-0">
+                    <span class="hidden md:inline font-mono">@auth.User.Identity?.Name</span>
+                    <form method="post" action="/admin/logout" class="m-0">
+                        <AntiforgeryToken />
+                        <button type="submit"
+                                class="px-2.5 py-1.5 rounded-md text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/70 transition-colors font-medium">
+                            Sign out
+                        </button>
+                    </form>
+                </div>
             </Authorized>
         </AuthorizeView>
-    </nav>
+    </div>
 </header>
 
-<main>
+<main class="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10 fade-in">
     @Body
 </main>

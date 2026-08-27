@@ -17,11 +17,6 @@ builder.AddDockerComposeEnvironment("bas")
         });
     });
 
-// Protects signing-key private material at rest, and worker TFNs from phase 3b. Losing it means
-// every stored signing key becomes undecryptable — it belongs in the deployment secret store, and
-// it must outlive any single container.
-var dataEncryptionKey = builder.AddParameter("data-encryption-key", secret: true);
-
 // PracticeManager.Api runs in its own compose stack on the same box, reachable over the shared
 // `caddy` network. Native gRPC lives on its 8081 listener - 8080 is HTTP/1.1 only, because Kestrel
 // cannot multiplex h2c and HTTP/1.1 on one cleartext endpoint.
@@ -29,10 +24,8 @@ var practiceManagerEndpoint = builder.AddParameter(
     "practicemanager-endpoint", value: "http://practicemanager-api:8081");
 var practiceManagerApiKey = builder.AddParameter("practicemanager-api-key", secret: true, value: "");
 
-// The first admin account, and a key for scripts. Both are bootstrap: the account is created only
-// if it does not exist, so changing the password here later does nothing - sign in and change it.
-var adminEmail = builder.AddParameter("admin-email", value: "");
-var adminPassword = builder.AddParameter("admin-password", secret: true, value: "");
+// A key for scripts. The admin account itself is seeded from appsettings, the same default every
+// tool in the practice uses, so a fresh database always has someone who can sign in.
 var adminApiKey = builder.AddParameter("admin-api-key", secret: true, value: "");
 
 var postgres = builder.AddPostgres("bas-postgres")
@@ -47,12 +40,8 @@ var database = postgres.AddDatabase("basdb");
 builder.AddProject<Projects.Api>("bas-api")
     .WithReference(database)
     .WaitFor(database)
-    .WithEnvironment("Security__DataEncryptionKey", dataEncryptionKey)
     .WithEnvironment("PracticeManager__Endpoint", practiceManagerEndpoint)
     .WithEnvironment("PracticeManager__ApiKey", practiceManagerApiKey)
-    .WithEnvironment("Admin__Users__0__Email", adminEmail)
-    .WithEnvironment("Admin__Users__0__InitialPassword", adminPassword)
-    .WithEnvironment("Admin__Users__0__DisplayName", "Administrator")
     .WithEnvironment("Admin__Keys__0__Name", "deploy-runbook")
     .WithEnvironment("Admin__Keys__0__Key", adminApiKey)
     // REST only — unlike PracticeManager.Api there is no native gRPC listener to keep off the

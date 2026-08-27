@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using Bas.Api.Data;
 using Bas.Api.Data.Entities;
-using Bas.Api.Security;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -32,7 +31,7 @@ public interface ISigningKeyStore
 }
 
 /// <summary>
-/// One RSA key pair, persisted with its private half encrypted.
+/// One RSA key pair, persisted.
 ///
 /// <para>Persisted rather than generated per process for one practical reason: a redeploy would
 /// otherwise invalidate every token in flight at once, and every worker mid-form would take a 401.
@@ -47,7 +46,6 @@ public interface ISigningKeyStore
 /// </summary>
 public sealed class SigningKeyStore(
     IServiceScopeFactory scopeFactory,
-    IDataEncryptor encryptor,
     IOptions<SigningKeyOptions> options,
     TimeProvider timeProvider,
     ILogger<SigningKeyStore> logger) : ISigningKeyStore, IDisposable
@@ -113,8 +111,7 @@ public sealed class SigningKeyStore(
         {
             Kid = kid,
             Algorithm = SecurityAlgorithms.RsaSha256,
-            PrivateKeyProtected = encryptor.Encrypt(
-                rsa.ExportPkcs8PrivateKey(), AesGcmDataEncryptor.SigningKeyPurpose),
+            PrivateKeyPem = rsa.ExportPkcs8PrivateKeyPem(),
             CreatedAt = timeProvider.GetUtcNow()
         });
 
@@ -141,8 +138,7 @@ public sealed class SigningKeyStore(
             // The RSA instance outlives this method by design — RsaSecurityKey holds it for as
             // long as the snapshot is live, and a superseded snapshot is collected with its keys.
             var rsa = RSA.Create();
-            rsa.ImportPkcs8PrivateKey(
-                encryptor.Decrypt(key.PrivateKeyProtected, AesGcmDataEncryptor.SigningKeyPurpose), out _);
+            rsa.ImportFromPem(key.PrivateKeyPem);
 
             var securityKey = new RsaSecurityKey(rsa) { KeyId = key.Kid };
             validationKeys.Add(securityKey);

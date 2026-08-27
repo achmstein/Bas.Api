@@ -213,23 +213,9 @@ tokens already issued expire within minutes on their own.
 | Setting | Source |
 | --- | --- |
 | `ConnectionStrings__basdb` | Aspire (env in the container) |
-| `Security__DataEncryptionKey` | env / user secrets. **Required outside Development.** |
 | `PartnerAuth__Issuer` | env; this service's public origin |
 | `Partners__Registrations__<n>__*` | env / appsettings |
 | `Cors__AllowedOrigins__<n>` | env; the partner origins our JS is embedded on |
-
-`Security__DataEncryptionKey` is a base64 256-bit key protecting the signing key at rest, and worker
-TFNs from phase 3b:
-
-```bash
-openssl rand -base64 32
-```
-
-**Losing it means every stored signing key becomes undecryptable** and has to be regenerated, which
-invalidates every token in flight. It belongs in the deployment secret store and must outlive any
-single container. Outside Development, a missing key fails the deploy rather than being quietly
-generated — a service that starts cleanly and then can't decrypt its own keys after the next restart
-is the worse outcome.
 
 Local development:
 
@@ -278,34 +264,24 @@ deploying it early breaks nothing that works today.
 
 ### First deploy
 
-1. Generate the at-rest encryption key and store it as the `DATA_ENCRYPTION_KEY` secret:
+1. Set the repository secrets: `POSTGRES_PASSWORD`, `DEPLOY_SSH_KEY`, `PRACTICEMANAGER_API_KEY`
+   (the same value as `PracticeManager.Api`'s `SECURITY_API_KEY`) and `ADMIN_API_KEY` for scripts
+   (`openssl rand -base64 32`).
 
-   ```bash
-   openssl rand -base64 32
-   ```
+2. Set the repository variables: `SERVER_HOST`, `SERVER_USER`, `BAS_REMOTE_DIR`.
 
-   **Keep a copy somewhere that outlives the box.** Losing it makes every stored signing key
-   undecryptable, and every token in flight invalid.
-
-2. Set the remaining repository secrets: `POSTGRES_PASSWORD`, `DEPLOY_SSH_KEY`,
-   `PRACTICEMANAGER_API_KEY` (the same value as `PracticeManager.Api`'s `SECURITY_API_KEY`),
-   `ADMIN_PASSWORD` (the first admin account's initial password) and `ADMIN_API_KEY`
-   (for scripts — `openssl rand -base64 32` again).
-
-3. Set the repository variables: `SERVER_HOST`, `SERVER_USER`, `BAS_REMOTE_DIR`, `ADMIN_EMAIL`.
+3. The admin account is seeded from `appsettings.json` — `david@nighttax.com.au` /
+   `Administrator1!`, the same default as the other tools. **Change the password after the first
+   sign-in.** Seeding is create-only, so it never overwrites what you change.
 
 4. Point `bas.nighttax.com.au` at the box. Caddy picks it up from the compose labels.
 
-5. Sign in at `https://bas.nighttax.com.au/admin` with `ADMIN_EMAIL` and `ADMIN_PASSWORD`, and
-   **change the password immediately** — it has been sitting in CI. The seeder never updates an
-   existing account, so changing `ADMIN_PASSWORD` afterwards does nothing.
-
-6. Register the partner from the console, or `POST /admin/v1/partners` with the `x-admin-key`
+5. Register the partner from the console, or `POST /admin/v1/partners` with the `x-admin-key`
    header. Configuration seeding still works for a first partner, but it is bootstrap-only: once a
    partner exists the API is authoritative, and a config file that differs is reported at startup
    rather than applied.
 
-7. Confirm the service is up:
+6. Confirm the service is up:
 
    ```bash
    curl -s https://bas.nighttax.com.au/health
@@ -321,10 +297,10 @@ figures — and git is explicitly not backing it up.
 sudo docker compose exec -T bas-postgres   pg_dump -U bas -d basdb --format=custom   > "/var/backups/bas/basdb-$(date -u +%Y%m%d-%H%M).dump"
 ```
 
-Worth a nightly cron and off-box copies. Two things to remember when restoring: the dump is
-useless without `DATA_ENCRYPTION_KEY`, since TFNs and signing keys are encrypted with it; and the
-dump itself contains personal information under the Privacy Act TFN Rule, so it needs the same care
-as the database.
+Worth a nightly cron and off-box copies. **The dump is plaintext**: worker TFNs and the
+token-signing key are stored as written, so the dump file is both personal information under the
+Privacy Act TFN Rule and a credential that can mint a token for any worker. Give it the same
+protection as the database itself, and do not leave it on a shared box unencrypted.
 
 ## What is not here yet
 

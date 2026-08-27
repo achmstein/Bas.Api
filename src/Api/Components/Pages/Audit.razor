@@ -2,45 +2,61 @@
 @attribute [Authorize(Policy = AdminEndpoints.UiPolicyName)]
 @inject AdminService Admin
 
-<h1>Audit</h1>
-<p class="lede">
+<div class="flex items-baseline justify-between gap-4 flex-wrap mb-1">
+    <h1 class="text-lg font-semibold tracking-tight text-zinc-900">Audit</h1>
+    <span class="text-xxs font-mono text-zinc-400 tabular-nums">@_entries.Count entries</span>
+</div>
+<p class="text-sm text-zinc-500 mb-6 max-w-2xl">
     Changes made through the admin surface, newest first. Reads are not recorded — every
-    partner-facing request already logs its partner and token id, and recording every page view
-    would bury the entries that matter.
+    partner-facing request already logs its partner and token id, and recording page views would
+    bury the entries that matter.
 </p>
 
 @if (_entries.Count == 0)
 {
-    <p class="empty">Nothing has been changed yet.</p>
+    <div class="bg-white border border-zinc-200/70 rounded-xl px-6 py-16 text-center">
+        <p class="text-sm text-zinc-500">Nothing has been changed yet.</p>
+    </div>
 }
 else
 {
-    <table>
-        <thead>
-        <tr>
-            <th>When (UTC)</th>
-            <th>Action</th>
-            <th>Who</th>
-            <th>Subject</th>
-            <th>Detail</th>
-        </tr>
-        </thead>
-        <tbody>
-        @foreach (var entry in _entries)
-        {
-            <tr>
-                <td class="mono">@entry.At.UtcDateTime.ToString("yyyy-MM-dd HH:mm")</td>
-                <td class="mono">@entry.Action</td>
-                <td>@entry.Actor</td>
-                <td class="mono">@(entry.Subject ?? "—")</td>
-                <td>@(entry.Detail ?? "")</td>
-            </tr>
-        }
-        </tbody>
-    </table>
+    <div class="bg-white border border-zinc-200/70 rounded-xl overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                <tr class="border-b border-zinc-200/70 bg-zinc-50/60">
+                    <th class="@Th">When (UTC)</th>
+                    <th class="@Th">Action</th>
+                    <th class="@Th">Who</th>
+                    <th class="@Th">Subject</th>
+                    <th class="@Th">Detail</th>
+                </tr>
+                </thead>
+                <tbody>
+                @foreach (var entry in _entries)
+                {
+                    <tr class="border-b border-zinc-100 last:border-0 hover:bg-zinc-50/60 transition-colors">
+                        <td class="px-4 py-2.5 font-mono text-xs text-zinc-500 tabular-nums whitespace-nowrap">
+                            @entry.At.UtcDateTime.ToString("yyyy-MM-dd HH:mm")
+                        </td>
+                        <td class="px-4 py-2.5">
+                            <span class="font-mono text-xs px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-700">@entry.Action</span>
+                        </td>
+                        <td class="px-4 py-2.5 text-zinc-600">@entry.Actor</td>
+                        <td class="px-4 py-2.5 font-mono text-xs text-zinc-500">@(entry.Subject ?? "—")</td>
+                        <td class="px-4 py-2.5 text-xs text-zinc-500">@(entry.Detail ?? "")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
 }
 
 @code {
+    private const string Th =
+        "text-left font-medium text-xxs uppercase tracking-[0.08em] text-zinc-500 px-4 py-2.5";
+
     private IReadOnlyList<AuditEntryResponse> _entries = [];
 
     protected override async Task OnParametersSetAsync() =>

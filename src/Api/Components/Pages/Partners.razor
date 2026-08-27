@@ -3,77 +3,121 @@
 @inject AdminService Admin
 @inject NavigationManager Navigation
 
-<h1>Partners</h1>
-<p class="lede">
-    Registered platforms. Nothing here is a secret: a client id, a public key fingerprint and a scope
-    grant. Suspending takes effect immediately — tokens already minted expire on their own within
-    minutes.
+<div class="flex items-baseline justify-between gap-4 flex-wrap mb-1">
+    <h1 class="text-lg font-semibold tracking-tight text-zinc-900">Partners</h1>
+    <span class="text-xxs font-mono text-zinc-400 tabular-nums">@_partners.Count registered</span>
+</div>
+<p class="text-sm text-zinc-500 mb-6 max-w-2xl">
+    Registered platforms. Nothing here is a secret — a client id, a public key fingerprint and a
+    scope grant. Suspending takes effect immediately; tokens already minted expire on their own
+    within minutes.
 </p>
 
 @if (_partners.Count == 0)
 {
-    <p class="empty">No partners are registered.</p>
+    <div class="bg-white border border-zinc-200/70 rounded-xl px-6 py-16 text-center">
+        <p class="text-sm text-zinc-500">No partners are registered.</p>
+        <p class="text-xs text-zinc-400 mt-1">
+            Register one with <span class="font-mono">POST /admin/v1/partners</span>.
+        </p>
+    </div>
 }
 else
 {
-    <table>
-        <thead>
-        <tr>
-            <th>Client id</th>
-            <th>Name</th>
-            <th>Status</th>
-            <th>Scopes</th>
-            <th>Key</th>
-            <th>Webhook</th>
-            <th class="num">Workers</th>
-            <th></th>
-        </tr>
-        </thead>
-        <tbody>
-        @foreach (var partner in _partners)
-        {
-            <tr>
-                <td class="mono">@partner.ClientId</td>
-                <td>@partner.Name</td>
-                <td><span class="status status-@partner.Status">@partner.Status</span></td>
-                <td class="mono">@partner.AllowedScopes</td>
-                <td class="mono" title="Fingerprint of the registered public key">@partner.PublicKeyFingerprint</td>
-                <td>
-                    @if (partner.WebhookUrl is null)
-                    {
-                        <text>polling only</text>
-                    }
-                    else
-                    {
-                        <text>@(partner.HasWebhookSecret ? "signed" : "UNSIGNED")</text>
-                    }
-                </td>
-                <td class="num">@partner.WorkerCount</td>
-                <td>
-                    @if (partner.Status == "active")
-                    {
-                        <form method="post" class="inline" @formname="@($"suspend-{partner.ClientId}")"
-                              @onsubmit="() => SetStatusAsync(partner.ClientId, false)">
-                            <AntiforgeryToken />
-                            <button type="submit" class="danger">Suspend</button>
-                        </form>
-                    }
-                    else
-                    {
-                        <form method="post" class="inline" @formname="@($"resume-{partner.ClientId}")"
-                              @onsubmit="() => SetStatusAsync(partner.ClientId, true)">
-                            <AntiforgeryToken />
-                            <button type="submit">Resume</button>
-                        </form>
-                    }
-                </td>
-            </tr>
-        }
-        </tbody>
-    </table>
+    <div class="bg-white border border-zinc-200/70 rounded-xl overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                <tr class="border-b border-zinc-200/70 bg-zinc-50/60">
+                    <th class="@Th">Client id</th>
+                    <th class="@Th">Name</th>
+                    <th class="@Th">Status</th>
+                    <th class="@Th">Scopes</th>
+                    <th class="@Th">Key</th>
+                    <th class="@Th">Webhook</th>
+                    <th class="@Th text-right">Workers</th>
+                    <th class="px-4 py-2.5"></th>
+                </tr>
+                </thead>
+                <tbody>
+                @foreach (var partner in _partners)
+                {
+                    <tr class="border-b border-zinc-100 last:border-0 hover:bg-zinc-50/60 transition-colors">
+                        <td class="px-4 py-2.5 font-mono text-zinc-900">@partner.ClientId</td>
+                        <td class="px-4 py-2.5 text-zinc-600">@partner.Name</td>
+                        <td class="px-4 py-2.5">
+                            @if (partner.Status == "active")
+                            {
+                                <span class="inline-flex items-center gap-1.5 text-xxs font-medium text-emerald-700">
+                                    <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/20"></span>
+                                    active
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="inline-flex items-center gap-1.5 text-xxs font-medium text-red-700">
+                                    <span class="inline-block h-1.5 w-1.5 rounded-full bg-red-500 ring-2 ring-red-500/20"></span>
+                                    suspended
+                                </span>
+                            }
+                        </td>
+                        <td class="px-4 py-2.5 font-mono text-xs text-zinc-500">@partner.AllowedScopes</td>
+                        <td class="px-4 py-2.5 font-mono text-xs text-zinc-400" title="Fingerprint of the registered public key">
+                            @partner.PublicKeyFingerprint
+                        </td>
+                        <td class="px-4 py-2.5 text-xs">
+                            @if (partner.WebhookUrl is null)
+                            {
+                                <span class="text-zinc-400">polling only</span>
+                            }
+                            else if (partner.HasWebhookSecret)
+                            {
+                                <span class="text-zinc-600">signed</span>
+                            }
+                            else
+                            {
+                                <span class="text-amber-700 font-medium">UNSIGNED</span>
+                            }
+                        </td>
+                        <td class="px-4 py-2.5 text-right tabular-nums font-mono text-zinc-600">@partner.WorkerCount</td>
+                        <td class="px-4 py-2.5 text-right">
+                            @if (partner.Status == "active")
+                            {
+                                <form method="post" class="inline m-0" @formname="@($"suspend-{partner.ClientId}")"
+                                      @onsubmit="() => SetStatusAsync(partner.ClientId, false)">
+                                    <AntiforgeryToken />
+                                    <button type="submit" class="@Danger">Suspend</button>
+                                </form>
+                            }
+                            else
+                            {
+                                <form method="post" class="inline m-0" @formname="@($"resume-{partner.ClientId}")"
+                                      @onsubmit="() => SetStatusAsync(partner.ClientId, true)">
+                                    <AntiforgeryToken />
+                                    <button type="submit" class="@Positive">Resume</button>
+                                </form>
+                            }
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
 }
 
 @code {
+    private const string Th =
+        "text-left font-medium text-xxs uppercase tracking-[0.08em] text-zinc-500 px-4 py-2.5";
+
+    private const string Danger =
+        "px-2 py-1 text-xs font-medium rounded-md border border-zinc-200 text-zinc-600 " +
+        "hover:text-red-700 hover:border-red-300 hover:bg-red-50 transition-colors";
+
+    private const string Positive =
+        "px-2 py-1 text-xs font-medium rounded-md border border-zinc-200 text-zinc-600 " +
+        "hover:text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50 transition-colors";
+
     private IReadOnlyList<AdminPartnerResponse> _partners = [];
 
     protected override async Task OnParametersSetAsync() =>

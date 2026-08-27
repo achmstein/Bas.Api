@@ -61,6 +61,7 @@ public sealed class BasDbContext(DbContextOptions<BasDbContext> options)
         {
             entity.ToTable("workers");
             entity.HasKey(e => e.Id);
+            entity.Property(e => e.Tfn).HasMaxLength(9);
             entity.Property(e => e.TfnLast3).HasMaxLength(3);
             entity.Property(e => e.Abn).HasMaxLength(11);
             entity.Property(e => e.FirstName).HasMaxLength(100);
@@ -179,7 +180,7 @@ public sealed class BasDbContext(DbContextOptions<BasDbContext> options)
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Kid).HasMaxLength(100).IsRequired();
             entity.Property(e => e.Algorithm).HasMaxLength(20).IsRequired();
-            entity.Property(e => e.PrivateKeyProtected).IsRequired();
+            entity.Property(e => e.PrivateKeyPem).IsRequired();
 
             // Also the arbiter when two instances start at once and both try to create the first
             // key: one insert wins, the loser re-reads.

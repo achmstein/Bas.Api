@@ -1,16 +1,68 @@
 @* Static server rendering throughout. An admin console is forms and tables; a SignalR circuit per
-   operator would buy nothing here and would put a reconnect banner between David and a kill switch. *@
+   operator would buy nothing here and would put a reconnect banner between David and a kill switch.
+   Styling follows PracticeManager.Api so the two consoles read as one system. *@
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bas.Api admin</title>
     <base href="/" />
-    <link rel="stylesheet" href="admin.css" />
+    <link rel="icon" href="data:," />
     <HeadOutlet />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+                        mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+                        display: ['"Space Mono"', '"JetBrains Mono"', 'ui-monospace', 'monospace'],
+                    },
+                    fontSize: {
+                        'xxs': ['0.6875rem', { lineHeight: '1rem' }],
+                    },
+                }
+            }
+        }
+    </script>
+
+    <style>
+        html, body {
+            font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+            font-feature-settings: 'cv11' on, 'ss01' on, 'cv02' on, 'cv03' on, 'cv04' on;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility;
+        }
+        code, pre, .font-mono {
+            font-feature-settings: 'liga' off, 'calt' off, 'zero' on;
+        }
+        .tabular-nums { font-variant-numeric: tabular-nums; }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgb(228 228 231); border-radius: 8px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgb(212 212 216); }
+
+        .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+
+        @@keyframes fade-in-up {
+            from { opacity: 0; transform: translateY(4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in { animation: fade-in-up 240ms ease-out both; }
+
+        ::selection { background: rgb(99 102 241 / 0.18); }
+    </style>
 </head>
-<body>
+<body class="bg-zinc-50 text-zinc-900 antialiased">
     <Routes />
 </body>
 </html>

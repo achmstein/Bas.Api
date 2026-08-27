@@ -7,26 +7,59 @@
 @inject TimeProvider Clock
 @attribute [AllowAnonymous]
 
-<div class="card">
-    <h1>Bas.Api admin</h1>
-    <p class="lede">Sign in to continue.</p>
+<div class="min-h-screen flex items-center justify-center px-4">
+    <div class="w-full max-w-sm fade-in">
+        <div class="flex items-center gap-3 mb-8">
+            <span class="font-display font-bold text-lg tracking-[0.04em] text-zinc-900 leading-none flex items-baseline">
+                <span>BAS</span>
+                <span class="mx-1.5 text-zinc-300 font-normal">/</span>
+                <span>API</span>
+            </span>
+            <span class="text-xxs font-mono font-medium px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500 tracking-[0.12em]">ADMIN</span>
+        </div>
 
-    <EditForm Model="Input" FormName="signin" OnValidSubmit="SignInAsync">
-        <AntiforgeryToken />
+        <div class="bg-white border border-zinc-200/70 rounded-xl shadow-sm p-6">
+            <h1 class="text-[15px] font-semibold text-zinc-900">Sign in</h1>
+            <p class="text-sm text-zinc-500 mt-1 mb-6">Activity statement administration.</p>
 
-        <label for="email">Email</label>
-        <InputText id="email" @bind-Value="Input.Email" autocomplete="username" />
+            <EditForm Model="Input" FormName="signin" OnValidSubmit="SignInAsync">
+                <AntiforgeryToken />
 
-        <label for="password">Password</label>
-        <InputText id="password" type="password" @bind-Value="Input.Password" autocomplete="current-password" />
+                <label for="email" class="block text-xxs font-medium uppercase tracking-[0.08em] text-zinc-500 mb-1.5">
+                    Email
+                </label>
+                <InputText id="email" @bind-Value="Input.Email" autocomplete="username" autofocus
+                           class="w-full px-3 py-2 text-sm bg-white border border-zinc-200 rounded-md
+                                  placeholder:text-zinc-400 focus:outline-none focus:ring-2
+                                  focus:ring-indigo-500/20 focus:border-indigo-400 transition-shadow" />
 
-        <button type="submit">Sign in</button>
-    </EditForm>
+                <label for="password" class="block text-xxs font-medium uppercase tracking-[0.08em] text-zinc-500 mb-1.5 mt-4">
+                    Password
+                </label>
+                <InputText id="password" type="password" @bind-Value="Input.Password" autocomplete="current-password"
+                           class="w-full px-3 py-2 text-sm bg-white border border-zinc-200 rounded-md
+                                  placeholder:text-zinc-400 focus:outline-none focus:ring-2
+                                  focus:ring-indigo-500/20 focus:border-indigo-400 transition-shadow" />
 
-    @if (_error is not null)
-    {
-        <p class="error">@_error</p>
-    }
+                @if (_error is not null)
+                {
+                    <p class="mt-4 text-sm text-red-600 flex items-start gap-1.5">
+                        <span class="inline-block h-1.5 w-1.5 rounded-full bg-red-500 mt-[7px] flex-shrink-0"></span>
+                        <span>@_error</span>
+                    </p>
+                }
+
+                <button type="submit"
+                        class="mt-6 w-full px-3 py-2 text-sm font-medium text-white bg-zinc-900 rounded-md
+                               hover:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-900/20
+                               transition-colors">
+                    Sign in
+                </button>
+            </EditForm>
+        </div>
+
+        <p class="text-xxs text-zinc-400 mt-4 text-center font-mono">bas.nighttax.com.au</p>
+    </div>
 </div>
 
 @code {

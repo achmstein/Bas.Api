@@ -20,10 +20,13 @@ public sealed class SigningKey
     public required string Algorithm { get; set; }
 
     /// <summary>
-    /// The private key, PKCS#8, encrypted with AES-GCM before it ever reaches the database — a
-    /// database backup should not be enough to mint tokens.
+    /// The private key, PKCS#8 PEM.
+    ///
+    /// <para>Anyone holding this can mint an access token for any worker, so a database dump is a
+    /// credential. It is regenerable, though: delete the row and a new key is created on the next
+    /// start, which invalidates only the tokens issued in the preceding ten minutes.</para>
     /// </summary>
-    public required byte[] PrivateKeyProtected { get; set; }
+    public required string PrivateKeyPem { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
 }

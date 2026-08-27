@@ -77,8 +77,9 @@ public class BasApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
             ["PracticeManager:Endpoint"] = "http://practicemanager.invalid:8081",
             ["Reconciler:Enabled"] = "false",
-            ["Security:DataEncryptionKey"] =
-                Convert.ToBase64String(Enumerable.Range(1, 32).Select(b => (byte)b).ToArray()),
+            // No admin account in the test host: the seeded default would be created on every
+            // fixture, and nothing here signs in through the console.
+            ["Admin:Users:0:Email"] = "",
 
             // Registered through configuration, exercising the same reconciliation path a deploy uses.
             ["Partners:Registrations:0:ClientId"] = PartnerClientId,

@@ -14,15 +14,15 @@ public sealed class Worker
     public Guid Id { get; set; } = Guid.CreateVersion7();
 
     /// <summary>
-    /// The TFN, encrypted at rest. Never stored or logged in the clear: the Privacy Act TFN Rule
-    /// applies to it, and a database backup should not be a disclosure.
+    /// The tax file number, digits only.
+    ///
+    /// <para>Stored as written. It is still TFN information under the Privacy Act TFN Rule, so it
+    /// never leaves this service in full - every response and log line carries the masked form -
+    /// and a database dump is now a disclosure if it escapes. Protect the backups accordingly.</para>
     /// </summary>
-    public byte[]? TfnProtected { get; set; }
+    public string? Tfn { get; set; }
 
-    /// <summary>
-    /// Last three digits, kept in the clear so a masked value can be rendered and a support
-    /// conversation can confirm the right number without decrypting anything.
-    /// </summary>
+    /// <summary>Last three digits, so a masked value can be rendered without touching the TFN itself.</summary>
     public string? TfnLast3 { get; set; }
 
     /// <summary>Digits only. Public information — the ABR publishes it — so it is not encrypted.</summary>
@@ -48,7 +48,7 @@ public sealed class Worker
 
     /// <summary>Whether Practice Manager has everything it needs to create a client for this worker.</summary>
     public bool IsCompleteForLodgement =>
-        TfnProtected is { Length: > 0 }
+        !string.IsNullOrEmpty(Tfn)
         && !string.IsNullOrWhiteSpace(FirstName)
         && !string.IsNullOrWhiteSpace(FamilyName)
         && DateOfBirth is not null;

@@ -5,7 +5,6 @@ using Bas.Api.Data;
 using Bas.Api.Components;
 using Bas.Api.Statements;
 using Bas.Api.Infrastructure;
-using Bas.Api.Security;
 using Bas.Api.Sync;
 using Bas.Api.Webhooks;
 using Microsoft.EntityFrameworkCore;
@@ -38,10 +37,6 @@ builder.Services.AddOptions<DatabaseOptions>()
 builder.Services.AddOptions<PartnerRegistrationOptions>()
     .Bind(builder.Configuration.GetSection(PartnerRegistrationOptions.SectionName))
     .ValidateOnStart();
-
-builder.Services.AddSingleton<IDataEncryptor>(serviceProvider => DataEncryptionKey.Resolve(
-    serviceProvider.GetRequiredService<IConfiguration>(),
-    serviceProvider.GetRequiredService<IHostEnvironment>()));
 
 builder.AddPartnerAuthentication();
 builder.AddAdminSurface();
