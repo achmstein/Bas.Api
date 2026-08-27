@@ -20,19 +20,18 @@ channel.
 That's the whole registration. We never hold a password, an API key, or anything else you'd have to
 rotate in lockstep with us.
 
-### Generating the key pair
+### Your signing key
 
-Easiest, and no terminal needed: open **https://bas.nighttax.com.au/key** and click Generate. The
-pair is created by your own browser and nothing is uploaded — we never see the half you keep.
+We generate it and send it to you as `bas-signing.key`. Put it in your secret manager as
+`BAS_SIGNING_KEY`. It stays on your servers — never in a browser or an app bundle, because anyone
+holding it can request access for any of your users.
 
-Or run `generate-partner-key.sh`, which came with this guide, or the two commands it wraps:
+If you would rather generate it yourself, say so and send us the public half instead:
 
 ```bash
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out bas-signing.key
 openssl pkey -in bas-signing.key -pubout -out bas-signing.pub
 ```
-
-Send us `bas-signing.pub`. Put `bas-signing.key` in your secret manager.
 
 ### Check it works before you build
 

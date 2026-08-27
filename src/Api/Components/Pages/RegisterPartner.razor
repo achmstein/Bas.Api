@@ -1,0 +1,177 @@
+@page "/admin/partners/new"
+@attribute [Authorize(Policy = AdminEndpoints.UiPolicyName)]
+@inject AdminService Admin
+
+<a href="/admin/partners" class="text-sm text-zinc-500 hover:text-zinc-900">&larr; Partners</a>
+
+@if (_result is null)
+{
+    <h1 class="text-lg font-semibold tracking-tight text-zinc-900 mt-3 mb-1">Register a partner</h1>
+    <p class="text-sm text-zinc-500 mb-6 max-w-xl">
+        A signing key is created for them unless they have sent you their own public key. You will
+        see the private half once, on the next screen.
+    </p>
+
+    <EditForm Model="Input" FormName="register" OnValidSubmit="RegisterAsync" class="max-w-xl">
+        <div class="bg-white border border-zinc-200/70 rounded-xl p-5 grid gap-4">
+            <div>
+                <label for="clientId" class="@Label">Client id</label>
+                <InputText id="clientId" @bind-Value="Input.ClientId" class="@Field" placeholder="mygigsters" />
+                <p class="@Hint">
+                    What they put in every token they sign. Lower case, no spaces. Changing it later
+                    means registering them again.
+                </p>
+            </div>
+
+            <div>
+                <label for="name" class="@Label">Display name</label>
+                <InputText id="name" @bind-Value="Input.Name" class="@Field" placeholder="MyGigsters" />
+            </div>
+
+            <div>
+                <label for="scopes" class="@Label">Scopes</label>
+                <InputText id="scopes" @bind-Value="Input.AllowedScopes" class="@Field" />
+                <p class="@Hint">They can request less than this, never more.</p>
+            </div>
+
+            <div>
+                <label for="key" class="@Label">
+                    Their public key
+                    <span class="normal-case tracking-normal text-zinc-400">— optional</span>
+                </label>
+                <InputTextArea id="key" @bind-Value="Input.PublicKeyPem" rows="3"
+                               class="@FieldMono" placeholder="Leave empty to generate one for them" />
+                <p class="@Hint">Paste this only if they generated their own. A private key is refused.</p>
+            </div>
+
+            @if (_error is not null)
+            {
+                <p class="text-sm text-red-600 flex items-start gap-1.5">
+                    <span class="inline-block h-1.5 w-1.5 rounded-full bg-red-500 mt-[7px] flex-shrink-0"></span>
+                    <span>@_error</span>
+                </p>
+            }
+
+            <div>
+                <button type="submit"
+                        class="px-3 py-2 text-sm font-medium text-white bg-zinc-900 rounded-md hover:bg-zinc-800 transition-colors">
+                    Register
+                </button>
+            </div>
+        </div>
+    </EditForm>
+}
+else
+{
+    <h1 class="text-lg font-semibold tracking-tight text-zinc-900 mt-3 mb-1">
+        @_result.Partner.ClientId registered
+    </h1>
+    <p class="text-sm text-zinc-500 mb-6 max-w-xl">
+        Key fingerprint <span class="font-mono text-xs">@_result.Partner.PublicKeyFingerprint</span>,
+        scopes <span class="font-mono text-xs">@_result.Partner.AllowedScopes</span>.
+    </p>
+
+    @if (_result.PrivateKeyPem is { } key)
+    {
+        <div class="max-w-2xl bg-white border border-amber-300 rounded-xl overflow-hidden mb-6">
+            <div class="px-5 py-3 bg-amber-50 border-b border-amber-200">
+                <p class="text-sm font-semibold text-amber-900 m-0">Copy this now — it is not stored</p>
+                <p class="text-xs text-amber-800 mt-1 mb-0">
+                    Nothing keeps this key. Leave the page and it is gone, and the only way to give
+                    them one is to register again. Anyone holding it can request access for any of
+                    their workers, so send it over a channel you trust.
+                </p>
+            </div>
+            <div class="p-5">
+                <textarea readonly rows="8" id="privateKey"
+                          class="w-full font-mono text-[11px] leading-relaxed p-3 bg-zinc-50 border border-zinc-200 rounded-md resize-none">@key</textarea>
+                <div class="flex gap-2 mt-3">
+                    <button type="button" class="@Secondary" id="copyKey">Copy</button>
+                    <button type="button" class="@Secondary" id="downloadKey">Download .key</button>
+                </div>
+            </div>
+        </div>
+
+        @* The key is already on this page, so both actions work from what is here. Sending it back
+           to the server to be downloaded would put it somewhere it does not need to be. *@
+        <script>
+            document.getElementById('copyKey').addEventListener('click', async event => {
+                await navigator.clipboard.writeText(document.getElementById('privateKey').value);
+                event.target.textContent = 'Copied';
+            });
+            document.getElementById('downloadKey').addEventListener('click', () => {
+                const pem = document.getElementById('privateKey').value;
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(new Blob([pem], { type: 'application/x-pem-file' }));
+                link.download = 'bas-signing.key';
+                link.click();
+                URL.revokeObjectURL(link.href);
+            });
+        </script>
+    }
+
+    <div class="max-w-2xl bg-white border border-zinc-200/70 rounded-xl p-5">
+        <p class="text-sm font-semibold text-zinc-900 m-0 mb-2">Send them</p>
+        <ul class="text-sm text-zinc-600 grid gap-1.5 m-0 p-0 list-none">
+            <li>Client id <span class="font-mono text-xs">@_result.Partner.ClientId</span></li>
+            @if (_result.PrivateKeyPem is not null)
+            {
+                <li>The key above, saved as <span class="font-mono text-xs">bas-signing.key</span></li>
+            }
+            <li>The one-pager and the integration guide from <span class="font-mono text-xs">docs/</span></li>
+            <li><span class="font-mono text-xs">partner-selftest.mjs</span>, so they can confirm it works before building</li>
+        </ul>
+    </div>
+
+    <a href="/admin/partners" class="inline-block mt-6 text-sm text-zinc-500 hover:text-zinc-900">Done</a>
+}
+
+@code {
+    private const string Label =
+        "block text-xxs font-medium uppercase tracking-[0.08em] text-zinc-500 mb-1.5";
+
+    private const string Field =
+        "w-full px-3 py-2 text-sm bg-white border border-zinc-200 rounded-md focus:outline-none " +
+        "focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 transition-shadow";
+
+    private const string FieldMono = Field + " font-mono text-xs";
+
+    private const string Hint = "text-xs text-zinc-500 mt-1.5 mb-0";
+
+    private const string Secondary =
+        "px-2.5 py-1.5 text-xs font-medium rounded-md border border-zinc-200 text-zinc-600 " +
+        "hover:text-zinc-900 hover:border-zinc-300 hover:bg-zinc-50 transition-colors";
+
+    [SupplyParameterFromForm]
+    private PartnerInput Input { get; set; } = new();
+
+    private CreatePartnerResult? _result;
+    private string? _error;
+
+    private async Task RegisterAsync()
+    {
+        var (result, error) = await Admin.CreatePartnerAsync(new CreatePartnerRequest
+        {
+            ClientId = (Input.ClientId ?? string.Empty).Trim(),
+            Name = (Input.Name ?? string.Empty).Trim(),
+            AllowedScopes = (Input.AllowedScopes ?? string.Empty).Trim(),
+            PublicKeyPem = string.IsNullOrWhiteSpace(Input.PublicKeyPem) ? null : Input.PublicKeyPem,
+        }, CancellationToken.None);
+
+        if (error is not null)
+        {
+            _error = error.Detail;
+            return;
+        }
+
+        _result = result;
+    }
+
+    private sealed class PartnerInput
+    {
+        public string? ClientId { get; set; }
+        public string? Name { get; set; }
+        public string? AllowedScopes { get; set; } = "bas:read bas:write profile:write";
+        public string? PublicKeyPem { get; set; }
+    }
+}

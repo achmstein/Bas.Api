@@ -5,7 +5,10 @@
 
 <div class="flex items-baseline justify-between gap-4 flex-wrap mb-1">
     <h1 class="text-lg font-semibold tracking-tight text-zinc-900">Partners</h1>
-    <span class="text-xxs font-mono text-zinc-400 tabular-nums">@_partners.Count registered</span>
+    <a href="/admin/partners/new"
+       class="px-2.5 py-1.5 text-sm font-medium rounded-md bg-zinc-900 text-white hover:bg-zinc-800 transition-colors">
+        Register partner
+    </a>
 </div>
 <p class="text-sm text-zinc-500 mb-6 max-w-2xl">
     Registered platforms. Nothing here is a secret — a client id, a public key fingerprint and a
@@ -18,7 +21,7 @@
     <div class="bg-white border border-zinc-200/70 rounded-xl px-6 py-16 text-center">
         <p class="text-sm text-zinc-500">No partners are registered.</p>
         <p class="text-xs text-zinc-400 mt-1">
-            Register one with <span class="font-mono">POST /admin/v1/partners</span>.
+            <a href="/admin/partners/new" class="text-zinc-500 underline">Register the first one.</a>
         </p>
     </div>
 }

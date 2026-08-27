@@ -184,33 +184,28 @@ tokens; they hand them to a browser, which hands them back, and we verify them i
 
 ## Onboarding a partner
 
-Three steps, and nothing secret moves between the two sides.
+Sign in to `/admin/partners` and press **Register partner**. Give it a client id and a name; a
+signing key is generated for them unless you paste one they sent you.
 
-**1. They generate a key.** Send them `scripts/generate-partner-key.sh`. It writes
-`bas-signing.pub` (they email us) and `bas-signing.key` (stays in their secret manager).
+The private key is shown **once**, on the screen that follows. Nothing stores it — leaving the page
+loses it, and the only way to issue another is to register again. That is deliberate: if it could be
+read back, a database dump would hand over every partner's identity. Copy or download it there and
+send it over a channel you trust.
 
-**2. We register them.**
+Then send them:
 
-```bash
-export BAS_ADMIN_KEY=...            # the x-admin-key from the deployment
-./scripts/register-partner.sh mygigsters "MyGigsters" ./bas-signing.pub
-```
+- `docs/bas-for-mygigsters.html` — print to PDF, for the non-technical reader
+- `docs/partner-integration.md` — for their engineers
+- `scripts/partner-selftest.mjs` — proves the key works before they build anything
 
-The script refuses a file containing a PRIVATE key, because that is the mistake worth catching
-before it reaches the database rather than after.
-
-**3. They prove it works** before writing any UI, with `scripts/partner-selftest.mjs`:
+They run the self-test first:
 
 ```bash
 npm install jose
 BAS_SIGNING_KEY="$(cat bas-signing.key)" node partner-selftest.mjs mygigsters
 ```
 
-It runs the whole flow for a made-up worker and deliberately stops short of submitting, so nothing
-reaches the practice.
-
-What to send them: `docs/bas-for-mygigsters.html` (print to PDF, for a non-technical reader),
-`docs/partner-integration.md` (their engineers), and the two scripts above.
+Every line should say PASS. It stops short of submitting, so nothing reaches the practice.
 
 ## Registering a partner
 

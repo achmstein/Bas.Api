@@ -196,6 +196,88 @@ public sealed class AdminTests(AdminFactory factory) : IClassFixture<AdminFactor
     }
 
     [Fact]
+    public async Task Registering_without_a_key_generates_one_and_returns_it_once()
+    {
+        using var scoped = new AdminFactory();
+        await scoped.InitializeAsync();
+        using var client = scoped.CreateClient();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/admin/v1/partners")
+        {
+            Content = JsonContent.Create(new CreatePartnerRequest
+            {
+                ClientId = "generated-key",
+                Name = "Generated",
+                AllowedScopes = "bas:read bas:write",
+            })
+        };
+        request.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
+
+        var response = await client.SendAsync(request);
+        response.StatusCode.ShouldBe(HttpStatusCode.Created);
+
+        // A response carrying a private key must not sit in a cache on its way to being copied.
+        response.Headers.CacheControl!.NoStore.ShouldBeTrue();
+
+        var created = await response.Content.ReadFromJsonAsync<CreatePartnerResult>();
+        created!.PrivateKeyPem.ShouldNotBeNullOrWhiteSpace();
+        created.PrivateKeyPem!.ShouldContain("PRIVATE KEY");
+
+        // The key it hands over has to actually work, or the partner discovers it does not.
+        using var signer = PartnerSigner.FromPrivateKey("generated-key", BasApiFactory.Issuer, created.PrivateKeyPem);
+        var now = scoped.Clock.GetUtcNow();
+
+        var exchange = await client.PostAsync("/api/v1/partner/token", new FormUrlEncodedContent(
+            new Dictionary<string, string>
+            {
+                [TokenExchange.Fields.GrantType] = TokenExchange.GrantType,
+                [TokenExchange.Fields.ClientAssertionType] = TokenExchange.ClientAssertionType,
+                [TokenExchange.Fields.ClientAssertion] = signer.CreateClientAssertion(now),
+                [TokenExchange.Fields.SubjectTokenType] = TokenExchange.SubjectTokenType,
+                [TokenExchange.Fields.SubjectToken] = signer.CreateSubjectToken("generated-worker", now),
+            }));
+
+        exchange.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        await scoped.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task The_generated_private_key_is_never_stored()
+    {
+        // The whole protection is that it cannot be fetched again. If a later read could return it,
+        // a database dump would hand over every partner's identity.
+        using var scoped = new AdminFactory();
+        await scoped.InitializeAsync();
+        using var client = scoped.CreateClient();
+
+        using var create = new HttpRequestMessage(HttpMethod.Post, "/admin/v1/partners")
+        {
+            Content = JsonContent.Create(new CreatePartnerRequest
+            {
+                ClientId = "not-stored", Name = "Not stored", AllowedScopes = "bas:read",
+            })
+        };
+        create.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
+        var created = await (await client.SendAsync(create)).Content.ReadFromJsonAsync<CreatePartnerResult>();
+
+        using var read = new HttpRequestMessage(HttpMethod.Get, "/admin/v1/partners/not-stored");
+        read.Headers.Add(AdminAuthenticationHandler.HeaderName, AdminFactory.AdminKey);
+        var body = await (await client.SendAsync(read)).Content.ReadAsStringAsync();
+
+        body.ShouldNotContain("PRIVATE KEY");
+        // A distinctive slice of the key material, so this cannot pass on a technicality.
+        var material = new string(created!.PrivateKeyPem!
+            .Replace("-----BEGIN PRIVATE KEY-----", "")
+            .Replace("-----END PRIVATE KEY-----", "")
+            .Where(char.IsLetterOrDigit).Take(40).ToArray());
+
+        body.ShouldNotContain(material);
+
+        await scoped.DisposeAsync();
+    }
+
+    [Fact]
     public async Task An_invalid_key_is_refused_at_rotation_rather_than_at_the_partners_next_call()
     {
         using var rsa = RSA.Create(2048);

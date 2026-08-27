@@ -18,12 +18,29 @@ public sealed class PartnerSigner : IDisposable
     private readonly JsonWebTokenHandler _handler = new() { SetDefaultTimesOnTokenCreation = false };
 
     public PartnerSigner(string clientId, string audience)
+        : this(clientId, audience, CreateKey()) { }
+
+    private PartnerSigner(string clientId, string audience, RSA rsa)
     {
         ClientId = clientId;
         Audience = audience;
 
-        _rsa = RSA.Create(2048);
+        _rsa = rsa;
         _credentials = new SigningCredentials(new RsaSecurityKey(_rsa), SecurityAlgorithms.RsaSha256);
+    }
+
+    private static RSA CreateKey() => RSA.Create(2048);
+
+    /// <summary>
+    /// A signer using a key issued by the admin surface, so a test can prove the key handed to a
+    /// partner actually authenticates rather than merely looking like a key.
+    /// </summary>
+    public static PartnerSigner FromPrivateKey(string clientId, string audience, string privateKeyPem)
+    {
+        var rsa = RSA.Create();
+        rsa.ImportFromPem(privateKeyPem);
+
+        return new PartnerSigner(clientId, audience, rsa);
     }
 
     public string ClientId { get; }

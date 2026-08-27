@@ -132,12 +132,7 @@ app.UseAuthorization();
 app.UseAntiforgeryRecovery();
 app.UseAntiforgery();
 
-// Anonymous: the fallback policy would otherwise put a login in front of the key generator, which
-// is the one page a partner visits before they have any credentials at all.
 app.MapStaticAssets().AllowAnonymous();
-
-// /key is what gets written in an email, so it should not need a file extension.
-app.MapGet("/key", () => Results.Redirect("/key.html")).AllowAnonymous().ExcludeFromDescription();
 
 app.MapPartnerAuthEndpoints();
 app.MapWorkerEndpoints();

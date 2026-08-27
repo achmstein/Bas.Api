@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Bas.Api.Infrastructure;
 using Bas.Api.Statements;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -53,11 +54,21 @@ public static class AdminEndpoints
         group.MapPost("/partners", async (
             CreatePartnerRequest request, AdminService admin, CancellationToken ct) =>
         {
-            var (partner, error) = await admin.CreatePartnerAsync(request, ct);
-            return error is not null ? error.ToResult() : Results.Created($"/admin/v1/partners/{request.ClientId}", partner);
+            var (created, error) = await admin.CreatePartnerAsync(request, ct);
+            if (error is not null)
+                return error.ToResult();
+
+            // no-store: this body may carry a private key, and it must not sit in a proxy or a
+            // browser cache on its way to being copied once.
+            return JsonWithHeaders.Create(
+                created, StatusCodes.Status201Created,
+                [("Cache-Control", "no-store"), ("Pragma", "no-cache")]);
         })
             .WithSummary("Register a partner")
-            .WithDescription("The public key is parsed here, so a bad one is refused now rather than at their first token exchange.");
+            .WithDescription(
+                "Omit publicKeyPem and a key pair is generated here; the private half comes back in " +
+                "this response and is never stored, so it cannot be retrieved again. Supply " +
+                "publicKeyPem instead when the partner generated their own.");
 
         group.MapPut("/partners/{clientId}/key", async (
             string clientId, RotateKeyRequest request, AdminService admin, CancellationToken ct) =>
@@ -149,9 +160,15 @@ public sealed record CreatePartnerRequest
     [StringLength(200, MinimumLength = 1)]
     public required string Name { get; init; }
 
-    /// <summary>PEM-encoded RSA or ECDSA <b>public</b> key. A private key is refused.</summary>
-    [Required]
-    public required string PublicKeyPem { get; init; }
+    /// <summary>
+    /// The partner's PEM-encoded <b>public</b> key, if they generated their own. A private key is
+    /// refused.
+    ///
+    /// <para>Leave it empty and a key pair is generated here instead. The private half is returned
+    /// once, in that response, and never stored — so it cannot be recovered afterwards and a
+    /// database dump cannot yield it.</para>
+    /// </summary>
+    public string? PublicKeyPem { get; init; }
 
     /// <summary>Space-delimited. Every scope must be one this service knows.</summary>
     [Required]
@@ -173,6 +190,20 @@ public sealed record RotateKeyRequest
 public sealed record SuspendRequest
 {
     public string? Reason { get; init; }
+}
+
+/// <summary>
+/// A newly registered partner, and the private key if one was generated for them.
+/// </summary>
+public sealed record CreatePartnerResult
+{
+    public required AdminPartnerResponse Partner { get; init; }
+
+    /// <summary>
+    /// The private key, present only in this one response and only when it was generated here.
+    /// Nothing stores it, so it cannot be shown again.
+    /// </summary>
+    public string? PrivateKeyPem { get; init; }
 }
 
 /// <summary>A partner, as an operator sees them. Carries no secret.</summary>

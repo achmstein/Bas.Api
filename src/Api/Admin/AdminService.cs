@@ -47,13 +47,38 @@ public sealed class AdminService(
         return ToResponse(partner, workers);
     }
 
-    public async Task<(AdminPartnerResponse? Partner, BasError? Error)> CreatePartnerAsync(
+    /// <summary>
+    /// Registers a partner, generating their key pair unless they supplied a public key.
+    ///
+    /// <para>When it generates, the private key is returned in the result and <b>never stored</b>.
+    /// That is the whole of the protection: it cannot be shown again, it is not in the database,
+    /// and a dump of that database cannot yield any partner's identity. The operator gets one
+    /// chance to save it, which is the same bargain AWS and GitHub make for a secret key.</para>
+    /// </summary>
+    public async Task<(CreatePartnerResult? Result, BasError? Error)> CreatePartnerAsync(
         CreatePartnerRequest request, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(request.ClientId))
+            return (null, new BasError(StatusCodes.Status400BadRequest, "Client id required", "clientId cannot be empty."));
+
         if (await db.Partners.AnyAsync(p => p.ClientId == request.ClientId, cancellationToken))
             return (null, Conflict($"A partner with client id '{request.ClientId}' already exists."));
 
-        if (Validate(request.PublicKeyPem, request.AllowedScopes) is { } invalid)
+        string publicKeyPem;
+        string? privateKeyPem = null;
+
+        if (string.IsNullOrWhiteSpace(request.PublicKeyPem))
+        {
+            using var rsa = RSA.Create(2048);
+            publicKeyPem = rsa.ExportSubjectPublicKeyInfoPem();
+            privateKeyPem = rsa.ExportPkcs8PrivateKeyPem();
+        }
+        else
+        {
+            publicKeyPem = request.PublicKeyPem;
+        }
+
+        if (Validate(publicKeyPem, request.AllowedScopes) is { } invalid)
             return (null, invalid);
 
         var now = timeProvider.GetUtcNow();
@@ -61,7 +86,7 @@ public sealed class AdminService(
         {
             ClientId = request.ClientId,
             Name = request.Name,
-            PublicKeyPem = request.PublicKeyPem,
+            PublicKeyPem = publicKeyPem,
             AllowedScopes = request.AllowedScopes,
             WebhookUrl = request.WebhookUrl,
             WebhookSecret = request.WebhookSecret,
@@ -71,12 +96,24 @@ public sealed class AdminService(
         };
 
         db.Partners.Add(partner);
+
+        // Records that a key was generated and its fingerprint - never the key. An audit log is
+        // read by more people than a database is.
         Audit("partner.created", partner.ClientId,
-            $"scopes [{partner.AllowedScopes}], key {Fingerprint(partner.PublicKeyPem)}");
+            $"scopes [{partner.AllowedScopes}], key {Fingerprint(publicKeyPem)}" +
+            (privateKeyPem is null ? ", key supplied by partner" : ", key generated here"));
 
         await db.SaveChangesAsync(cancellationToken);
 
-        return (ToResponse(partner, 0), null);
+        logger.LogInformation(
+            "Partner {ClientId} registered by {Actor} with key {Fingerprint}.",
+            partner.ClientId, actor.Name, Fingerprint(publicKeyPem));
+
+        return (new CreatePartnerResult
+        {
+            Partner = ToResponse(partner, 0),
+            PrivateKeyPem = privateKeyPem
+        }, null);
     }
 
     /// <summary>
