@@ -243,8 +243,11 @@ The AppHost brings up Postgres and applies migrations on startup.
 ## Tests
 
 ```bash
-dotnet test tests/Api.Tests/Api.Tests.csproj
+dotnet run --project tests/Api.Tests/Api.Tests.csproj
 ```
+
+`dotnet run`, not `dotnet test`: xunit v3 runs on Microsoft.Testing.Platform, so the test project is
+its own executable and the .NET 10 SDK will not drive it through the old VSTest target.
 
 **Requires a running Docker daemon.** The suite runs against a real Postgres via Testcontainers,
 which costs about ten seconds of container start. That's deliberate: an in-memory SQLite would

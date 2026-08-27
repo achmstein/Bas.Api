@@ -38,8 +38,12 @@ jobs:
             --store-password-in-clear-text \
             --configfile nuget.config
 
+      # `dotnet run`, not `dotnet test`. xunit v3 runs on Microsoft.Testing.Platform, the test
+      # project IS its own executable, and the .NET 10 SDK refuses to drive it through the old
+      # VSTest target. This is the native invocation and it reports failures through the exit code
+      # the same way.
       - name: Test
-        run: dotnet test tests/Api.Tests/Api.Tests.csproj -c Release
+        run: dotnet run --project tests/Api.Tests/Api.Tests.csproj -c Release
 
   publish-contracts:
     name: Publish Bas.Api.Contracts NuGet
