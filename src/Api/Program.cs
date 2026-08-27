@@ -1,4 +1,5 @@
 using Bas.Api.Auth;
+using Bas.Api.Bas;
 using Bas.Api.Data;
 using Bas.Api.Endpoints;
 using Bas.Api.Infrastructure;
@@ -38,6 +39,9 @@ builder.Services.AddSingleton<IDataEncryptor>(serviceProvider => DataEncryptionK
 
 builder.AddPartnerAuthentication();
 
+builder.Services.AddScoped<WorkerIdentityService>();
+builder.Services.AddScoped<BasPeriodService>();
+
 builder.Services.AddHostedService<DatabaseStartupService>();
 
 // CORS matters here in a way it did not for PracticeManager.Api: our JS runs on the partner's
@@ -57,6 +61,10 @@ builder.Services.AddOpenApi("v1", options => options.AddDocumentTransformer<Part
 
 builder.Services.AddProblemDetails();
 
+// DataAnnotations on request records are not enforced without this, so [Range(0, int.MaxValue)] on
+// a money field would sit there looking reassuring while a negative amount saved happily.
+builder.Services.AddValidation();
+
 var app = builder.Build();
 
 app.UseExceptionHandler();
@@ -68,6 +76,7 @@ app.UseAuthorization();
 
 app.MapPartnerAuthEndpoints();
 app.MapWorkerEndpoints();
+app.MapBasEndpoints();
 
 // The document the MyGigsters team generates their Next.js and Flutter clients from.
 app.MapOpenApi().AllowAnonymous();

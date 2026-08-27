@@ -266,20 +266,188 @@ you'll get the same `workerId` back — that's how we know it's the same person 
 
 ---
 
-## 8. Scopes
 
-| Scope | Grants |
-|---|---|
-| `bas:read` | Read the user's own activity statements |
-| `bas:write` | Save figures and submit for lodgement |
-| `profile:write` | Set the user's identity: TFN, ABN, name, date of birth |
+## 8. The worker's identity
 
-Ask for the narrowest set a given screen needs. You can always request a subset of what you hold;
-you can never request more.
+Before anything can be lodged we need enough to create a client in Practice Manager. Send it once,
+whenever you have it — at signup, or the first time they open the BAS screen.
+
+### `PUT /api/v1/workers/me` — scope `profile:write`
+
+```json
+{
+  "tfn": "123 456 782",
+  "abn": "51824753556",
+  "firstName": "Jordan",
+  "familyName": "Ellis",
+  "dateOfBirth": "1994-03-12",
+  "email": "jordan@example.com",
+  "phone": "0400 000 000"
+}
+```
+
+`tfn`, `firstName`, `familyName` and `dateOfBirth` are required; `abn`, `email` and `phone` are not.
+Spaces in the TFN and ABN are fine.
+
+Both numbers are checked against the ATO's own checksum before we store them, so a mistyped digit
+comes back as a `400` **while the worker is still on the form**, rather than as a failed lodgement a
+quarter later. The error never echoes the number back.
+
+### `GET /api/v1/workers/me` — scope `bas:read`
+
+```json
+{
+  "workerId": "0198f2c1-...",
+  "partnerId": "mygigsters",
+  "tfnMasked": "******782",
+  "abn": "51824753556",
+  "firstName": "Jordan",
+  "familyName": "Ellis",
+  "dateOfBirth": "1994-03-12",
+  "isCompleteForLodgement": true
+}
+```
+
+**The TFN only ever comes back masked** — to you and to us. Use `isCompleteForLodgement` to decide
+whether to show the lodge button; submitting is refused while it is false.
 
 ---
 
-## 9. Full API reference
+## 9. Activity statements
+
+### Financial years and quarters
+
+Two Australian conventions that will cost you a day if you assume otherwise:
+
+- **A financial year is named for the year it ends.** FY2027 runs 1 Jul 2026 to 30 Jun 2027.
+- **Quarters are numbered from July.** Q1 is Jul–Sep; Q3 is Jan–Mar.
+
+```
+FY2027 Q1   1 Jul 2026 - 30 Sep 2026   due 28 Oct 2026
+FY2027 Q2   1 Oct 2026 - 31 Dec 2026   due 28 Jan 2027
+FY2027 Q3   1 Jan 2027 - 31 Mar 2027   due 28 Apr 2027
+FY2027 Q4   1 Apr 2027 - 30 Jun 2027   due 28 Jul 2027
+```
+
+The due date shown is the statutory one. Lodging through a registered agent usually extends it —
+that concession is one of the real reasons to go through the practice.
+
+### `GET /api/v1/bas` — scope `bas:read`
+
+Their statements, newest first. Quarters they have never opened are included as empty drafts, so a
+first visit shows the quarter they are meant to be lodging instead of an empty list. Those carry
+`"id": "00000000-0000-0000-0000-000000000000"` until the first save creates them.
+
+### `GET /api/v1/bas/{financialYear}/{quarter}` — scope `bas:read`
+
+One statement. An untouched quarter is an empty draft, not a `404`, so you do not need to
+special-case "they have not started yet".
+
+### `PUT /api/v1/bas/{financialYear}/{quarter}` — scope `bas:write`
+
+```jsonc
+// PUT /api/v1/bas/2027/1 - the whole payload, Simpler BAS
+{
+  "statementType": "C",
+  "totalSales": 31900,        // G1, GST inclusive
+  "gstOnSales": 2900,         // 1A
+  "gstOnPurchases": 870,      // 1B
+  "totalPurchases": 9570,     // stored, not lodged - it derives 1B
+  "cashAccountingMethod": true
+}
+```
+
+> **This is a full replacement, not a merge.** Send every label the worker has a value for on each
+> save, not just what changed. An absent label means *this statement has no such label*, which is a
+> different thing from zero.
+
+That distinction is load-bearing. A worker with no PAYG instalment obligation has **no T section at
+all**, and writing zeros into one would produce a different statement from the one the ATO issued.
+So: send the whole form each time, and leave sections the worker does not have entirely absent.
+
+Optional sections, for workers who have them:
+
+| Field | Label | When |
+|---|---|---|
+| `instalmentIncome` | T1 | The ATO has them in the PAYG instalment system |
+| `atoInstalmentAmount` | T7 | as above |
+| `variedInstalmentAmount` | T9 | They are varying the instalment down |
+| `variationReasonCode` | T4 | **Required whenever T9 is sent** |
+| `totalSalaryWages` | W1 | They employ someone |
+| `amountWithheld` | W2 | as above |
+
+All amounts are **whole dollars** — the ATO drops cents on an activity statement — and none may be
+negative.
+
+Editing stops once a statement is submitted; a `409` means it is already with the practice. A
+statement that *failed* can be corrected and re-submitted.
+
+### `POST /api/v1/bas/{financialYear}/{quarter}/submit` — scope `bas:write`
+
+```json
+{
+  "periodId": "0198f2d0-...",
+  "status": "submitted",
+  "submittedAt": "2026-10-02T04:11:09Z"
+}
+```
+
+**`202 Accepted`, never `200`.** The statement is queued, not lodged. Practice Manager is a single
+browser session behind a queue of one, and every worker lodges inside the same 72 hours each quarter
+— a synchronous call over that would be a guaranteed outage on the busiest day of the quarter. Do
+not tell your user "lodged" here; tell them "sent for review".
+
+Submitting twice returns the original acknowledgement rather than an error, so a lost response is
+safe to retry.
+
+`409` responses worth handling:
+
+| Detail says | Fix |
+|---|---|
+| Worker identity is incomplete | `PUT /api/v1/workers/me` first |
+| Period has not ended | A BAS cannot be lodged before its quarter is over |
+| Nothing to submit | Save at least G1, 1A and 1B |
+
+### `GET /api/v1/bas/{financialYear}/{quarter}/status` — scope `bas:read`
+
+```json
+{ "status": "in_review", "netAmount": 2030, "dueDate": "2026-10-28" }
+```
+
+```
+draft -> submitted -> pushed -> in_review -> lodged
+                 \-> failed  (carries failureReason; correct it and re-submit)
+```
+
+| Status | Means |
+|---|---|
+| `draft` | Being filled in |
+| `submitted` | Queued for the practice |
+| `pushed` | In Practice Manager, waiting for the agent |
+| `in_review` | The agent has it open |
+| `lodged` | Lodged with the ATO |
+| `failed` | Did not reach the practice; `failureReason` says why |
+
+**`netAmount` is label 9 as Practice Manager computed it**, not as we did — it is `null` until the
+statement has been pushed and read back. We deliberately do not calculate it locally: if our
+arithmetic and the ATO's ever disagree, ours is the one that is wrong.
+
+---
+
+## 10. Scopes
+
+| Scope | Grants |
+|---|---|
+| `bas:read` | Read the worker's own statements and identity |
+| `bas:write` | Save figures and submit for lodgement |
+| `profile:write` | Set the worker's identity: TFN, ABN, name, date of birth |
+
+Ask for the narrowest set a given screen needs. You can always request a subset of what you hold;
+you can never request more. A missing scope is a `403`, not a `401`.
+
+---
+
+## 11. Full API reference
 
 The OpenAPI document is served at `/openapi/v1.json`. Point your generator at it:
 
@@ -291,11 +459,24 @@ For Dart, configure `openapi_generator` against the same URL.
 
 ---
 
-## 10. Rotating your key
+## 12. Two things that are not code
+
+Both have real-world lead time, so they are worth starting before the integration is finished.
+
+**Every worker must be on the practice's ATO client list** before anything can be lodged for them.
+That is per-worker onboarding with a genuine delay — it belongs in your signup flow, not at the
+moment someone taps "lodge".
+
+**We need a valid TFN per worker.** Practice Manager will not create a client without one. That
+brings the Privacy Act TFN Rule onto both sides, so the data-sharing agreement is best drafted
+alongside the build rather than after it.
+
+---
+
+## 13. Rotating your key
 
 Send us the new public key. We deploy it, and from that moment assertions signed with the old key
-stop being accepted — so sign with the new one only once we've confirmed.
+stop being accepted — so switch to signing with the new one only once we have confirmed.
 
-If you need a zero-gap rotation, tell us: we can register the new key alongside the old one for a
-window. Given a ten-minute token lifetime, a brief coordinated switch is usually simpler than the
-overlap.
+If you need a zero-gap rotation, tell us and we will register the new key alongside the old one for
+a window. Given a ten-minute token lifetime, a brief coordinated switch is usually simpler.

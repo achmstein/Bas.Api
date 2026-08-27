@@ -39,9 +39,46 @@ docs/
 
 ## Build status
 
-Phase **3a is complete**: the service scaffold and the whole partner authentication path.
-Phases 3b onward (worker identity, BAS periods, the reconciler, status webhooks, partner admin)
-are not built yet — see *What isn't here yet* below.
+Phases **3a and 3b are complete**: the scaffold, the whole partner authentication path, and the
+partner-facing REST surface. A partner can register, obtain a token, set a worker's identity, save
+activity-statement figures and submit them. Everything up to the point where a statement is queued
+for the practice works.
+
+Nothing reaches Practice Manager yet — that is 3c. A submitted statement sits at `submitted` until
+the reconciler exists. See *What is not here yet*.
+
+## The surface
+
+| Endpoint | Scope | Purpose |
+|---|---|---|
+| `POST /api/v1/partner/token` | — | Token exchange. Server-to-server only. |
+| `GET /api/v1/workers/me` | `bas:read` | The worker behind the token. TFN always masked. |
+| `PUT /api/v1/workers/me` | `profile:write` | Worker identity. TFN and ABN checksum-validated. |
+| `GET /api/v1/bas` | `bas:read` | Their statements, newest first. |
+| `GET /api/v1/bas/{fy}/{q}` | `bas:read` | One statement; an empty draft if untouched. |
+| `PUT /api/v1/bas/{fy}/{q}` | `bas:write` | Save figures. **Full replacement, not a merge.** |
+| `POST /api/v1/bas/{fy}/{q}/submit` | `bas:write` | **202.** Queued, never lodged inline. |
+| `GET /api/v1/bas/{fy}/{q}/status` | `bas:read` | Status + the net amount PM computed. |
+
+`docs/partner-integration.md` is the partner-facing version, with working Next.js and Dart.
+
+### Rules worth knowing before reading the code
+
+- **Money is whole-dollar `int`.** The ATO drops cents on an activity statement, so carrying
+  decimals would only invite a rounding disagreement with the ATO's own arithmetic.
+- **Every figure is nullable, and the distinction is load-bearing.** A worker with no PAYG
+  instalment obligation has no T section at all — which is not a T section of zero. `PUT` is
+  therefore a full replacement: an absent label means the statement has no such label.
+- **`netAmount` is read back from Practice Manager, never calculated here.** If our arithmetic and
+  the ATO's disagree, ours is the one that is wrong.
+- **Submit is asynchronous, always.** PM is one browser session behind a queue of one, and BAS is
+  quarterly — every worker lodges inside the same 72 hours. A synchronous call over that is a
+  guaranteed outage on the busiest day of the quarter.
+- **TFN validation happens at save, not at push.** PM creates a client in two calls and only the
+  second validates the TFN, so a bad one leaves a fully-created client behind — and a retrying
+  reconciler orphans another on every attempt.
+- **Financial years are named for the year they end**, and quarters run from July. FY2027 Q1 is
+  Jul-Sep 2026.
 
 ## Authentication
 
@@ -169,19 +206,24 @@ Required variables: `SERVER_HOST`, `SERVER_USER`, `BAS_REMOTE_DIR`.
 Postgres runs as a compose service with a named volume. It holds worker identity and, from 3b, TFNs
 — back it up.
 
-## What isn't here yet
+## What is not here yet
 
 | Phase | Work |
 |---|---|
-| 3b | `Worker` identity fields + `BasPeriod` + the REST surface + OpenAPI schemas |
-| 3c | Reconciler calling `SyncActivityStatement` on PracticeManager.Api |
+| 3c | Reconciler calling `SyncActivityStatement` on PracticeManager.Api, with a `SyncState` ledger |
 | 3d | Status webhook + net-amount read-back |
 | 3e | Partner admin API (register, rotate, suspend) + per-request audit |
 
-`Worker` currently carries an id and a creation timestamp and nothing else — enough for the token's
-`sub` to be a subject this service owns rather than one a partner supplied. The identity fields
-Practice Manager needs arrive with 3b.
+A submitted statement currently stops at `submitted`. `pushed`, `in_review`, `lodged` and `failed`
+are modelled and documented but nothing sets them yet.
 
-Two questions from the plan are still open and both gate 3c: who picks the statement type (it should
-probably be read back from ATO prefill rather than supplied by the partner), and who captures the
-taxpayer's declaration.
+Two questions from the plan are still open, and both gate 3c:
+
+**Who picks the statement type.** The ATO issues the statement and chooses its type; PM stores it as
+`typeVariationCode`. Today the partner sends it, so a partner sending `C` when the ATO issued `G`
+would have us create the wrong statement. It should be read back from prefill instead — making the
+create step "find the statement the ATO issued" rather than "make one". This is the weakest seam in
+3b and it is deliberately marked as such in `BasPeriod.StatementType`.
+
+**Who captures the declaration.** Lodging a BAS is a legal act by the taxpayer. Either the partner
+captures it and we rely on them contractually, or the agent's own declaration covers it.
